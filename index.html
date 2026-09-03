@@ -319,6 +319,30 @@ function haversineMeters(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 const isMapGeoreferenced = (map) => !!(map && ((map.geoCorners && map.geoCorners.length === 4) || (map.refPoints && map.refPoints.length >= 2)));
+
+// --- PNG metadata extraction — reads back the georeferencing data a
+// shared map has embedded inside itself as a tEXt chunk (see
+// embedJsonInPng on the main app's side), so importing a shared map only
+// needs the one image file, no separate JSON.
+function extractJsonFromPng(arrayBuffer) {
+  const bytes = new Uint8Array(arrayBuffer);
+  const view = new DataView(arrayBuffer);
+  let offset = 8; // skip the 8-byte PNG signature
+  while (offset < bytes.length - 8) {
+    const len = view.getUint32(offset, false);
+    const type = new TextDecoder().decode(bytes.slice(offset + 4, offset + 8));
+    if (type === 'tEXt') {
+      const text = new TextDecoder().decode(bytes.slice(offset + 8, offset + 8 + len));
+      const nullIdx = text.indexOf('\0');
+      if (text.slice(0, nullIdx) === 'georef') {
+        try { return JSON.parse(text.slice(nullIdx + 1)); } catch (e) { return null; }
+      }
+    }
+    if (type === 'IEND') break;
+    offset += 4 + 4 + len + 4; // length field + type + data + crc
+  }
+  return null;
+}
 function lineLength(points) {
   if (!points || points.length < 2) return 0;
   let total = 0;
@@ -746,41 +770,35 @@ function RefPointForm({ pointIndex, onSubmit, onCancel }) {
 }
 
 // ---------- Import a georeferenced map exported from the main Harder
-// Contracting app (image + JSON sidecar via its "Share this map" button).
-// True AirDrop "Open With" isn't possible for a home-screen web app on
-// iOS — Apple only lets AirDrop hand files to native apps registered for
-// specific file types. This is the practical alternative: AirDrop the two
-// files to the iPad (they land in Files), then pick them here.
+// Contracting app's "Share this map" button. True AirDrop "Open With"
+// isn't possible for a home-screen web app on iOS — Apple only lets
+// AirDrop hand files to native apps registered for specific file types.
+// This is the practical alternative: AirDrop the file to the iPad (it
+// lands in Files), then pick it here.
 //
-// Two separate single-file pickers rather than one combined multi-select
-// — iOS's file picker is unreliable about letting you select across two
-// different file-type categories (an image and a document) in the same
-// multi-select pass, which is almost certainly why nothing happened
-// before: the picker likely only handed back one of the two files, or
-// none, with no feedback either way.
+// Just one file — the georeferencing data (refPoints/geoCorners/etc.) is
+// embedded directly inside the PNG itself as a standard tEXt chunk (see
+// extractJsonFromPng), so there's nothing separate to keep track of or
+// accidentally leave behind during AirDrop.
 function ImportMapForm({ onImport, importing, onCancel }) {
-  const [imageFile, setImageFile] = useState(null);
-  const [jsonFile, setJsonFile] = useState(null);
   const [error, setError] = useState(null);
 
-  const canImport = imageFile && jsonFile && !importing;
-
-  const doImport = async () => {
+  const handleFile = async (file) => {
     setError(null);
     let geoData;
     try {
-      const text = await jsonFile.text();
-      geoData = JSON.parse(text);
+      const arrayBuffer = await file.arrayBuffer();
+      geoData = extractJsonFromPng(arrayBuffer);
     } catch (e) {
-      setError("Couldn't read that .json file — pick it again, or re-share from the main app.");
+      setError("Couldn't read that image file — pick it again, or re-share from the main app.");
       return;
     }
     if (!geoData || !geoData.imageWidth || !geoData.imageHeight) {
-      setError("That .json file doesn't look like a map export — missing image dimensions. Make sure it's the file from the main app's share, not something else.");
+      setError("This image doesn't have map data embedded in it — make sure it's shared from the main app's \"Share this map\" button, not a regular photo or a re-saved copy (re-saving through some apps can strip this out).");
       return;
     }
     try {
-      await onImport(geoData, imageFile);
+      await onImport(geoData, file);
     } catch (e) {
       setError("Import failed — " + (e && e.message ? e.message : 'try again.'));
     }
@@ -791,28 +809,15 @@ function ImportMapForm({ onImport, importing, onCancel }) {
       <div className="w-full p-5" style={{ background: COLORS.bg, borderRadius: '16px 16px 0 0', border: `2px solid ${COLORS.line}`, borderBottom: 'none' }}>
         <h2 className="font-display text-lg font-bold mb-2">Import a shared map</h2>
         <p className="text-xs mb-3" style={{ color: COLORS.inkDim }}>
-          AirDrop the two files from the main app to this iPad first (Save to Files if prompted), then pick each one below — one at a time.
+          AirDrop the map image from the main app to this iPad first (Save to Files if prompted), then pick it below. The georeferencing is built into the file — nothing else needed.
         </p>
         {error && <p className="text-xs mb-3" style={{ color: '#E07A5F' }}>{error}</p>}
-
-        <p className="text-xs font-semibold mb-1" style={{ color: COLORS.inkDim }}>1. The map image (.png or .jpg)</p>
-        <label className="block text-center rounded-lg py-3 mb-3 cursor-pointer font-display font-semibold text-sm" style={{ background: COLORS.surfaceRaised, border: `2px dashed ${imageFile ? COLORS.accent : COLORS.line}`, color: imageFile ? COLORS.accent : COLORS.ink }}>
-          {imageFile ? `✓ ${imageFile.name}` : '📁 Choose the image file'}
-          <input type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg" className="hidden" disabled={importing}
-            onChange={(e) => { const f = e.target.files[0]; e.target.value = ''; if (f) { setImageFile(f); setError(null); } }} />
+        <label className="block text-center rounded-lg py-3 mb-3 cursor-pointer font-display font-semibold uppercase tracking-wide text-sm" style={{ background: COLORS.surfaceRaised, border: `2px dashed ${COLORS.line}`, color: COLORS.accent }}>
+          {importing ? 'Importing…' : '📁 Choose the shared map image'}
+          <input type="file" accept="image/png,.png" className="hidden" disabled={importing}
+            onChange={(e) => { const f = e.target.files[0]; e.target.value = ''; if (f) handleFile(f); }} />
         </label>
-
-        <p className="text-xs font-semibold mb-1" style={{ color: COLORS.inkDim }}>2. The matching .json file</p>
-        <label className="block text-center rounded-lg py-3 mb-4 cursor-pointer font-display font-semibold text-sm" style={{ background: COLORS.surfaceRaised, border: `2px dashed ${jsonFile ? COLORS.accent : COLORS.line}`, color: jsonFile ? COLORS.accent : COLORS.ink }}>
-          {jsonFile ? `✓ ${jsonFile.name}` : '📁 Choose the .json file'}
-          <input type="file" accept="application/json,.json" className="hidden" disabled={importing}
-            onChange={(e) => { const f = e.target.files[0]; e.target.value = ''; if (f) { setJsonFile(f); setError(null); } }} />
-        </label>
-
-        <div className="flex gap-2">
-          <Btn onClick={doImport} disabled={!canImport}>{importing ? 'Importing…' : 'Import this map'}</Btn>
-          <Btn variant="ghost" onClick={onCancel}>Cancel</Btn>
-        </div>
+        <Btn variant="ghost" className="w-full" onClick={onCancel}>Cancel</Btn>
       </div>
     </div>
   );
