@@ -2,7 +2,11 @@
 // depends on) so the whole thing keeps launching even after weeks with no
 // signal in the bush. Map images themselves are cached separately, inside
 // the app, via IndexedDB — this worker is just for the code that runs it.
-const CACHE_NAME = 'harder-field-map-v1';
+//
+// Bump this version string any time index.html (or anything else here)
+// changes and gets re-uploaded — that's what makes the update actually
+// show up instead of the iPad quietly keeping the old cached copy forever.
+const CACHE_NAME = 'harder-field-map-v2';
 const PRECACHE_URLS = [
   './',
   './index.html',
@@ -37,11 +41,30 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Cache-first: serve instantly from cache when available (works with zero
-// signal), and quietly refresh the cache in the background when online so
-// updates still make it through over time.
+// The page itself (index.html / './') is network-first: always try to get
+// the latest version when there's signal, so an update you push shows up
+// immediately, and only fall back to the saved copy when offline. Every
+// other file (React, PDF.js, etc. — things that don't change) stays
+// cache-first, since there's no reason to re-fetch those every time.
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
+  const isPage = event.request.mode === 'navigate' || event.request.url.endsWith('/index.html') || event.request.url.endsWith('/');
+
+  if (isPage) {
+    event.respondWith(
+      fetch(event.request)
+        .then((resp) => {
+          if (resp && resp.ok) {
+            const copy = resp.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+          }
+          return resp;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
   event.respondWith(
     caches.match(event.request).then((cached) => {
       const network = fetch(event.request)
