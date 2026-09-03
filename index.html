@@ -946,75 +946,78 @@ function App() {
   const handleFreehandPoint = (x, y) => setLinePoints((prev) => [...prev, { x, y }]);
   const handleFreehandEnd = () => { if (linePoints.length >= 2) setPendingLineSubmit(true); };
 
+  const pill = { background: 'rgba(27,31,25,0.82)', backdropFilter: 'blur(2px)', border: `1px solid ${COLORS.line}` };
+
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', color: COLORS.ink, fontFamily: 'Inter, sans-serif' }}>
-      <div className="px-3 py-2 flex items-center justify-between flex-shrink-0" style={{ borderBottom: `1px solid ${COLORS.line}` }}>
-        <div className="flex-1 min-w-0">
-          {maps.length > 1 ? (
-            <select value={currentMap ? currentMap.id : ''} onChange={(e) => setSelectedMapId(e.target.value)}
-              className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none" style={{ background: COLORS.surfaceRaised, color: COLORS.ink, border: `1px solid ${COLORS.line}` }}>
-              {maps.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-            </select>
-          ) : (
-            <p className="text-sm font-display font-bold truncate">{currentMap ? currentMap.name : 'Harder Field Map'}</p>
-          )}
-        </div>
-        <button onClick={() => setShowSettings(true)} className="ml-3 flex-shrink-0 text-xl" style={{ color: COLORS.inkDim }} title="Settings">⚙️</button>
+    <div style={{ height: '100%', position: 'relative', color: COLORS.ink, fontFamily: 'Inter, sans-serif' }}>
+      {/* Map fills the entire screen — everything else floats on top of it */}
+      <div style={{ position: 'absolute', inset: 0 }}>
+        <GestureMapViewport ref={viewportRef} disablePan={placingPin || measureMode || pencilMode || calibratingMap}
+          onCenterOnMe={myPosition ? () => viewportRef.current && viewportRef.current.centerOnPoint(myPosition.px, myPosition.py) : null}>
+          <MapCanvas
+            viewBoxWidth={currentMap ? currentMap.imageWidth : 560}
+            viewBoxHeight={currentMap ? currentMap.imageHeight : 400}
+            backgroundImageUrl={currentMapImageSrc}
+            pinsToShow={mapPins}
+            linesToShow={mapLines}
+            placingPin={placingPin}
+            measureMode={measureMode}
+            pencilMode={pencilMode}
+            drawingPoints={linePoints}
+            calibrating={calibratingMap}
+            refPoints={currentMap ? currentMap.refPoints : []}
+            trail={trailPixels}
+            myPosition={myPosition}
+            onMapTap={handleMapTap}
+            onFreehandPoint={handleFreehandPoint}
+            onFreehandEnd={handleFreehandEnd}
+            onPinTap={(id) => setOpenPin(mapPins.find((p) => p.id === id))}
+            onLineTap={(id) => setOpenLine(mapLines.find((l) => l.id === id))}
+          />
+        </GestureMapViewport>
       </div>
 
-      <div className="px-3 py-2 flex gap-2 flex-wrap flex-shrink-0">
+      {/* Top bar: map name/picker (left) + settings gear — right side left clear for the N compass button */}
+      <div style={{ position: 'absolute', top: 10, left: 10, right: 64, zIndex: 6, display: 'flex', alignItems: 'center', gap: 8, pointerEvents: 'none' }}>
+        <button onClick={() => setShowSettings(true)} className="flex-shrink-0 text-lg rounded-full" style={{ ...pill, width: 40, height: 40, pointerEvents: 'auto' }} title="Settings">⚙️</button>
+        <div className="flex-1 min-w-0 rounded-lg" style={{ ...pill, pointerEvents: 'auto' }}>
+          {maps.length > 1 ? (
+            <select value={currentMap ? currentMap.id : ''} onChange={(e) => setSelectedMapId(e.target.value)}
+              className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none bg-transparent" style={{ color: COLORS.ink, border: 'none' }}>
+              {maps.map((m) => <option key={m.id} value={m.id} style={{ background: COLORS.bg }}>{m.name}</option>)}
+            </select>
+          ) : (
+            <p className="text-sm font-display font-bold truncate px-3 py-2">{currentMap ? currentMap.name : 'Harder Field Map'}</p>
+          )}
+        </div>
+      </div>
+
+      {/* Tool buttons, floating bottom-left — bottom-right stays clear for the center-on-me button */}
+      <div style={{ position: 'absolute', bottom: 10, left: 10, right: 64, zIndex: 6, display: 'flex', gap: 8, flexWrap: 'wrap', pointerEvents: 'none' }}>
         <button onClick={() => { const next = !placingPin; exitAllModes(); setPlacingPin(next); }}
-          className="text-xs font-semibold px-3 py-2 rounded-lg" style={{ background: placingPin ? COLORS.accent : COLORS.surfaceRaised, color: placingPin ? COLORS.ink2 : COLORS.ink, border: `1px solid ${COLORS.line}` }}>
+          className="text-xs font-semibold px-3 py-2 rounded-full" style={{ ...pill, background: placingPin ? COLORS.accent : pill.background, color: placingPin ? COLORS.ink2 : COLORS.ink, pointerEvents: 'auto' }}>
           {placingPin ? 'Cancel' : '📍 Drop a pin'}
         </button>
         <button onClick={() => { const next = !measureMode; exitAllModes(); setMeasureMode(next); }}
-          className="text-xs font-semibold px-3 py-2 rounded-lg" style={{ background: measureMode ? COLORS.accent : COLORS.surfaceRaised, color: measureMode ? COLORS.ink2 : COLORS.ink, border: `1px solid ${COLORS.line}` }}>
+          className="text-xs font-semibold px-3 py-2 rounded-full" style={{ ...pill, background: measureMode ? COLORS.accent : pill.background, color: measureMode ? COLORS.ink2 : COLORS.ink, pointerEvents: 'auto' }}>
           {measureMode ? 'Cancel' : '📏 Draw & Measure'}
         </button>
         <button onClick={() => { const next = !pencilMode; exitAllModes(); setPencilMode(next); }}
-          className="text-xs font-semibold px-3 py-2 rounded-lg" style={{ background: pencilMode ? COLORS.accent : COLORS.surfaceRaised, color: pencilMode ? COLORS.ink2 : COLORS.ink, border: `1px solid ${COLORS.line}` }}>
+          className="text-xs font-semibold px-3 py-2 rounded-full" style={{ ...pill, background: pencilMode ? COLORS.accent : pill.background, color: pencilMode ? COLORS.ink2 : COLORS.ink, pointerEvents: 'auto' }}>
           {pencilMode ? 'Cancel' : '✏️ Pencil'}
         </button>
         {measureMode && linePoints.length >= 2 && (
-          <button onClick={() => setPendingLineSubmit(true)} className="text-xs font-semibold px-3 py-2 rounded-lg" style={{ background: COLORS.accent, color: COLORS.ink2 }}>✓ Done</button>
+          <button onClick={() => setPendingLineSubmit(true)} className="text-xs font-semibold px-3 py-2 rounded-full" style={{ background: COLORS.accent, color: COLORS.ink2, pointerEvents: 'auto' }}>✓ Done</button>
         )}
       </div>
 
-      <div className="flex-1 min-h-0 px-3 pb-3">
-        <div className="rounded-xl overflow-hidden h-full" style={{ border: `2px solid ${COLORS.line}` }}>
-          <GestureMapViewport ref={viewportRef} disablePan={placingPin || measureMode || pencilMode || calibratingMap}
-            onCenterOnMe={myPosition ? () => viewportRef.current && viewportRef.current.centerOnPoint(myPosition.px, myPosition.py) : null}>
-            <MapCanvas
-              viewBoxWidth={currentMap ? currentMap.imageWidth : 560}
-              viewBoxHeight={currentMap ? currentMap.imageHeight : 400}
-              backgroundImageUrl={currentMapImageSrc}
-              pinsToShow={mapPins}
-              linesToShow={mapLines}
-              placingPin={placingPin}
-              measureMode={measureMode}
-              pencilMode={pencilMode}
-              drawingPoints={linePoints}
-              calibrating={calibratingMap}
-              refPoints={currentMap ? currentMap.refPoints : []}
-              trail={trailPixels}
-              myPosition={myPosition}
-              onMapTap={handleMapTap}
-              onFreehandPoint={handleFreehandPoint}
-              onFreehandEnd={handleFreehandEnd}
-              onPinTap={(id) => setOpenPin(mapPins.find((p) => p.id === id))}
-              onLineTap={(id) => setOpenLine(mapLines.find((l) => l.id === id))}
-            />
-          </GestureMapViewport>
-        </div>
-      </div>
-
       {!currentMapGeoreferenced && currentMap && (
-        <p className="text-xs text-center px-3 pb-2" style={{ color: '#E3A23C' }}>
-          This map isn't calibrated yet — the blue dot and real measurements won't work until you calibrate it in Settings.
+        <p className="text-xs text-center rounded-lg mx-auto" style={{ position: 'absolute', top: 58, left: 10, right: 64, zIndex: 6, color: '#E3A23C', ...pill, padding: '6px 10px' }}>
+          Not calibrated yet — the blue dot and real measurements won't work until you calibrate it in Settings.
         </p>
       )}
       {!currentMap && (
-        <p className="text-xs text-center px-3 pb-2" style={{ color: COLORS.inkDim }}>
+        <p className="text-sm text-center rounded-lg" style={{ position: 'absolute', top: '50%', left: 20, right: 20, transform: 'translateY(-50%)', zIndex: 6, color: COLORS.inkDim, ...pill, padding: '10px' }}>
           No map loaded — tap ⚙️ to add one from Files.
         </p>
       )}
