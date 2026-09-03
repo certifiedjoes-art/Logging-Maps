@@ -1,0 +1,1116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+<title>Harder Field Map</title>
+
+<!-- Registers the service worker as the very first thing this page does,
+     so it has the best chance of being ready to serve everything from
+     cache on a cold, signal-less launch. -->
+<script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+</script>
+
+<!-- PWA / Add to Home Screen -->
+<meta name="theme-color" content="#1B1F19" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Field Map" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
+<link rel="manifest" href="manifest.json" />
+
+<!-- Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+
+<script>
+  window.__loadStatus = {};
+</script>
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" onload="window.__loadStatus['tailwind']='ok'" onerror="window.__loadStatus['tailwind']='FAILED'">
+<script crossorigin src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js" onload="window.__loadStatus['react']='ok'" onerror="window.__loadStatus['react']='FAILED'"></script>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js" onload="window.__loadStatus['react-dom']='ok'" onerror="window.__loadStatus['react-dom']='FAILED'"></script>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.6/babel.min.js" onload="window.__loadStatus['babel']='ok'" onerror="window.__loadStatus['babel']='FAILED'"></script>
+
+<!-- PDF.js — renders an uploaded GeoPDF's first page to a canvas, client-side. -->
+<script type="module">
+  import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.mjs";
+  window.pdfjsLib = pdfjsLib;
+  window.__loadStatus['pdfjs'] = 'ok';
+</script>
+<script>
+  setTimeout(() => { if (!window.pdfjsLib) window.__loadStatus['pdfjs'] = 'FAILED'; }, 5000);
+</script>
+
+<style>
+  html, body {
+    background: #1B1F19;
+    margin: 0; padding: 0;
+    overscroll-behavior: none;
+  }
+  #root { height: 100vh; overflow: hidden; }
+  #root {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+</style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script>
+  window.addEventListener('error', function (e) {
+    const root = document.getElementById('root');
+    if (root.children.length > 0) return;
+    const detail = (e.error && e.error.stack) ? e.error.stack : (e.message || 'Script failed to load');
+    showFatalError(detail + (e.filename ? '\n\nFile: ' + e.filename + (e.lineno ? ':' + e.lineno : '') : ''));
+  }, true);
+  window.addEventListener('unhandledrejection', function (e) {
+    const root = document.getElementById('root');
+    if (root.children.length > 0) return;
+    const reason = e.reason;
+    const detail = (reason && reason.stack) ? reason.stack : (reason && reason.message ? reason.message : String(reason));
+    showFatalError('Unhandled error: ' + detail);
+  });
+  function showFatalError(msg) {
+    const root = document.getElementById('root');
+    if (root.dataset.errorShown) return;
+    root.dataset.errorShown = '1';
+    const status = window.__loadStatus || {};
+    const lines = ['tailwind', 'react', 'react-dom', 'babel', 'pdfjs'].map(function (k) {
+      return k + ': ' + (status[k] || 'never finished loading');
+    });
+    root.innerHTML =
+      '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:2rem;font-family:sans-serif;color:#ECE8DF;background:#1B1F19;text-align:center;">' +
+      '<div style="max-width:520px;"><h1 style="color:#E8622C;font-size:1.4rem;">Something went wrong</h1>' +
+      '<p style="margin-top:1rem;">Screenshot this and send it back:</p>' +
+      '<button onclick="window.location.reload()" style="margin-top:1rem;padding:0.75rem 1.5rem;font-size:1rem;font-weight:bold;background:#7FA37E;color:#1B1F19;border:none;border-radius:8px;">Try again</button>' +
+      '<pre style="text-align:left;background:#242829;padding:1rem;border-radius:8px;overflow:auto;font-size:0.7rem;white-space:pre-wrap;margin-top:1.5rem;">' + msg + '\n\n' + lines.join('\n') + '</pre></div></div>';
+  }
+</script>
+
+<script type="text/babel" data-presets="react">
+try {
+const { useState, useEffect, useRef, useImperativeHandle } = React;
+
+const COLORS = {
+  bg: '#1B1F19',
+  surface: '#242A22',
+  surfaceRaised: '#2E362C',
+  ink: '#F0EFE6',
+  inkDim: '#9BAA95',
+  line: '#3A4436',
+  accent: '#7FA37E',
+  accentDim: '#5C7D5D',
+  ink2: '#262B21',
+};
+
+function Btn({ children, onClick, variant = 'primary', className = '', type = 'button', disabled }) {
+  const base = 'font-display font-bold uppercase tracking-wide text-base px-6 py-3.5 rounded-xl transition-all focus:outline-none focus:ring-2 cursor-pointer active:scale-95';
+  const styles = {
+    primary: { background: COLORS.accent, color: '#1B1F19', boxShadow: '0 3px 8px rgba(0,0,0,0.35)', border: 'none' },
+    ghost: { background: 'transparent', color: COLORS.ink, border: `2.5px solid ${COLORS.line}`, boxShadow: 'none' },
+    danger: { background: 'transparent', color: '#E07A5F', border: '2.5px solid #E07A5F', boxShadow: 'none' },
+  };
+  return (
+    <button type={type} onClick={onClick} disabled={disabled}
+      style={{ ...styles[variant], opacity: disabled ? 0.5 : 1, pointerEvents: disabled ? 'none' : 'auto' }}
+      className={`${base} ${className} hover:scale-105`}>
+      {children}
+    </button>
+  );
+}
+function TextInput(props) {
+  return (
+    <input {...props}
+      className={`w-full rounded-lg px-4 py-2.5 text-base focus:outline-none focus:ring-2 ${props.className || ''}`}
+      style={{ background: COLORS.surfaceRaised, color: COLORS.ink, border: `1px solid ${COLORS.line}`, ...(props.style || {}) }} />
+  );
+}
+
+function cacheGet(key, fallback) {
+  try {
+    const raw = localStorage.getItem('kiosk_' + key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch (e) { return fallback; }
+}
+function cacheSet(key, value) {
+  try { localStorage.setItem('kiosk_' + key, JSON.stringify(value)); } catch (e) {}
+}
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+function fmtWhen(iso) {
+  try { return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
+  catch (e) { return ''; }
+}
+
+// ---------- Map image storage (IndexedDB) ----------
+function idbOpenMapDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('harderKioskMapImages', 1);
+    req.onupgradeneeded = () => { if (!req.result.objectStoreNames.contains('images')) req.result.createObjectStore('images'); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbSetMapImageBlob(mapId, blob) {
+  try {
+    const db = await idbOpenMapDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('images', 'readwrite');
+      tx.objectStore('images').put(blob, mapId);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) {}
+}
+async function idbGetMapImageBlob(mapId) {
+  try {
+    const db = await idbOpenMapDB();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction('images', 'readonly');
+      const req = tx.objectStore('images').get(mapId);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) { return null; }
+}
+async function idbDeleteMapImageBlob(mapId) {
+  try {
+    const db = await idbOpenMapDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('images', 'readwrite');
+      tx.objectStore('images').delete(mapId);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) {}
+}
+function useMapImageSrc(map) {
+  const [src, setSrc] = React.useState(null);
+  React.useEffect(() => {
+    let cancelled = false;
+    let createdUrl = null;
+    setSrc(null);
+    if (!map) return undefined;
+    (async () => {
+      const blob = await idbGetMapImageBlob(map.id);
+      if (!cancelled && blob) {
+        createdUrl = URL.createObjectURL(blob);
+        setSrc(createdUrl);
+      }
+    })();
+    return () => { cancelled = true; if (createdUrl) URL.revokeObjectURL(createdUrl); };
+  }, [map && map.id]);
+  return src;
+}
+
+// ---------- GeoPDF parsing (same approach validated against real mill maps) ----------
+function extractGeoPdfMetadata(pdfText) {
+  try {
+    const mediaBoxMatch = pdfText.match(/\/MediaBox\s*\[\s*([\d.\s-]+)\]/);
+    if (!mediaBoxMatch) return null;
+    const mb = mediaBoxMatch[1].trim().split(/\s+/).map(Number);
+    const mediaWidth = mb[2] - mb[0];
+    const mediaHeight = mb[3] - mb[1];
+    if (!(mediaWidth > 0) || !(mediaHeight > 0)) return null;
+
+    const vpMatch = pdfText.match(/\/VP\s*\[\s*<<([\s\S]*?)>>\s*\]/);
+    if (!vpMatch) return null;
+    const vpBlock = vpMatch[1];
+
+    const bboxMatch = vpBlock.match(/\/BBox\s*\[([\d.\s-]+)\]/);
+    const measureRefMatch = vpBlock.match(/\/Measure\s+(\d+)\s+0\s+R/);
+    if (!bboxMatch || !measureRefMatch) return null;
+
+    const bboxNums = bboxMatch[1].trim().split(/\s+/).map(Number);
+    const leftX = Math.min(bboxNums[0], bboxNums[2]);
+    const rightX = Math.max(bboxNums[0], bboxNums[2]);
+    const topYPdf = Math.max(bboxNums[1], bboxNums[3]);
+    const bottomYPdf = Math.min(bboxNums[1], bboxNums[3]);
+    const bboxFraction = {
+      left: leftX / mediaWidth, right: rightX / mediaWidth,
+      top: (mediaHeight - topYPdf) / mediaHeight, bottom: (mediaHeight - bottomYPdf) / mediaHeight,
+    };
+
+    const objNum = measureRefMatch[1];
+    const objPattern = new RegExp(objNum + '\\s+0\\s+obj\\s*(<<[\\s\\S]*?>>)\\s*endobj');
+    const objMatch = pdfText.match(objPattern);
+    if (!objMatch) return null;
+    const measureBlock = objMatch[1];
+
+    const gptsMatch = measureBlock.match(/\/GPTS\s*\[([\d.\s-]+)\]/);
+    const lptsMatch = measureBlock.match(/\/LPTS\s*\[([\d.\s-]+)\]/);
+    if (!gptsMatch || !lptsMatch) return null;
+
+    const gpts = gptsMatch[1].trim().split(/\s+/).map(Number);
+    const lpts = lptsMatch[1].trim().split(/\s+/).map(Number);
+    if (gpts.length < 8 || lpts.length < 8 || gpts.length !== lpts.length) return null;
+
+    const corners = [];
+    for (let i = 0; i < 4; i++) corners.push({ u: lpts[i * 2], v: lpts[i * 2 + 1], lat: gpts[i * 2], lng: gpts[i * 2 + 1] });
+    return { bboxFraction, corners };
+  } catch (e) { return null; }
+}
+function bilinearGeoInterp(corners, u, v) {
+  const [c00, c01, c10, c11] = [
+    corners.find((c) => c.u === 0 && c.v === 0), corners.find((c) => c.u === 0 && c.v === 1),
+    corners.find((c) => c.u === 1 && c.v === 0), corners.find((c) => c.u === 1 && c.v === 1),
+  ];
+  if (!c00 || !c01 || !c10 || !c11) return null;
+  const lat = (1 - u) * (1 - v) * c00.lat + u * (1 - v) * c10.lat + (1 - u) * v * c01.lat + u * v * c11.lat;
+  const lng = (1 - u) * (1 - v) * c00.lng + u * (1 - v) * c10.lng + (1 - u) * v * c01.lng + u * v * c11.lng;
+  return { lat, lng };
+}
+function pixelToLatLng(map, px, py) {
+  if (map && map.geoCorners && map.imageWidth && map.imageHeight) {
+    const bf = map.geoBBoxFraction;
+    const fx = px / map.imageWidth;
+    const fy = py / map.imageHeight;
+    const u = (fx - bf.left) / (bf.right - bf.left);
+    const v = 1 - (fy - bf.top) / (bf.bottom - bf.top);
+    const result = bilinearGeoInterp(map.geoCorners, u, v);
+    if (result) return result;
+  }
+  const pts = map && map.refPoints;
+  if (!pts || pts.length < 2) return null;
+  const [p1, p2] = pts;
+  if (p2.px === p1.px || p2.py === p1.py) return null;
+  const lat = p1.lat + (py - p1.py) * (p2.lat - p1.lat) / (p2.py - p1.py);
+  const lng = p1.lng + (px - p1.px) * (p2.lng - p1.lng) / (p2.px - p1.px);
+  return { lat, lng };
+}
+function latLngToPixel(map, lat, lng) {
+  if (map && map.geoCorners && map.geoCorners.length === 4) {
+    const corners = map.geoCorners;
+    const bf = map.geoBBoxFraction;
+    // Inverse bilinear via iterative search (Newton-ish two-step) — good
+    // enough accuracy for a UTM-zone-sized block map with near-rectangular
+    // corner geometry, which is what these mill exports are.
+    let u = 0.5, v = 0.5;
+    for (let i = 0; i < 6; i++) {
+      const guess = bilinearGeoInterp(corners, u, v);
+      if (!guess) break;
+      const dLat = lat - guess.lat, dLng = lng - guess.lng;
+      const gU = bilinearGeoInterp(corners, Math.min(1, u + 0.001), v);
+      const gV = bilinearGeoInterp(corners, u, Math.min(1, v + 0.001));
+      if (!gU || !gV) break;
+      const dLatDu = (gU.lat - guess.lat) / 0.001, dLngDu = (gU.lng - guess.lng) / 0.001;
+      const dLatDv = (gV.lat - guess.lat) / 0.001, dLngDv = (gV.lng - guess.lng) / 0.001;
+      const det = dLatDu * dLngDv - dLngDu * dLatDv;
+      if (Math.abs(det) < 1e-12) break;
+      const du = (dLat * dLngDv - dLng * dLatDv) / det;
+      const dv = (dLatDu * dLng - dLngDu * dLat) / det;
+      u += du; v += dv;
+    }
+    const fx = bf.left + u * (bf.right - bf.left);
+    const fy = bf.top + (1 - v) * (bf.bottom - bf.top);
+    return { px: fx * map.imageWidth, py: fy * map.imageHeight };
+  }
+  const pts = map && map.refPoints;
+  if (!pts || pts.length < 2) return null;
+  const [p1, p2] = pts;
+  if (p2.lat === p1.lat || p2.lng === p1.lng) return null;
+  const py = p1.py + (lat - p1.lat) * (p2.py - p1.py) / (p2.lat - p1.lat);
+  const px = p1.px + (lng - p1.lng) * (p2.px - p1.px) / (p2.lng - p1.lng);
+  return { px, py };
+}
+function haversineMeters(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const dLat = (lat2 - lat1) * Math.PI / 180, dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+const isMapGeoreferenced = (map) => !!(map && ((map.geoCorners && map.geoCorners.length === 4) || (map.refPoints && map.refPoints.length >= 2)));
+function lineLength(points) {
+  if (!points || points.length < 2) return 0;
+  let total = 0;
+  for (let i = 1; i < points.length; i++) total += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+  return total;
+}
+function realLineLength(map, points, unit) {
+  if (!isMapGeoreferenced(map) || !points || points.length < 2) return null;
+  let totalMeters = 0;
+  for (let i = 1; i < points.length; i++) {
+    const a = pixelToLatLng(map, points[i - 1].x, points[i - 1].y);
+    const b = pixelToLatLng(map, points[i].x, points[i].y);
+    if (!a || !b) return null;
+    totalMeters += haversineMeters(a.lat, a.lng, b.lat, b.lng);
+  }
+  return unit === 'feet' ? totalMeters * 3.28084 : totalMeters;
+}
+
+async function renderPdfFirstPageToBlob(file) {
+  if (!window.pdfjsLib) throw new Error('PDF renderer not loaded — check your connection and try again.');
+  if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs';
+  }
+  const arrayBuffer = await file.arrayBuffer();
+  let geoData = null;
+  try {
+    const pdfText = new TextDecoder('latin1').decode(new Uint8Array(arrayBuffer));
+    geoData = extractGeoPdfMetadata(pdfText);
+  } catch (e) { geoData = null; }
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const page = await pdf.getPage(1);
+  const viewport = page.getViewport({ scale: 2 });
+  const canvas = document.createElement('canvas');
+  canvas.width = viewport.width; canvas.height = viewport.height;
+  const ctx = canvas.getContext('2d');
+  await page.render({ canvasContext: ctx, viewport }).promise;
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+  return { blob, width: canvas.width, height: canvas.height, geoData };
+}
+
+const PIN_TYPES = {
+  hazard: { label: 'Hazard', icon: '⚠️', color: '#E07A5F' },
+  wetland: { label: 'Wet Land', icon: '💧', color: '#5C8AA8' },
+  leftoverTrees: { label: 'Leftover Trees', icon: '🌲', color: '#6FAE72' },
+  accident: { label: 'Accident / Incident', icon: '🚨', color: '#D14848' },
+  other: { label: 'Other', icon: '📍', color: '#9B8AA8' },
+};
+const LINE_TYPES = {
+  road: { label: 'Road', color: '#C9A227' },
+  skidTrail: { label: 'Skid Trail', color: '#8B5E3C' },
+  cutblockBoundary: { label: 'Cutblock Boundary', color: '#D14848' },
+  other: { label: 'Other', color: '#9B8AA8' },
+};
+
+// ---------- Map viewport (pan/zoom/rotate) ----------
+const GestureMapViewport = React.forwardRef(function GestureMapViewport({ children, disablePan, onCenterOnMe }, ref) {
+  const [scale, setScale] = useState(1);
+  const [rotation, setRotation] = useState(0);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const pointers = useRef(new Map());
+  const gestureStart = useRef(null);
+  const panStart = useRef(null);
+  const containerRef = useRef(null);
+
+  const pointerArray = () => Array.from(pointers.current.values());
+  const handlePointerDown = (e) => {
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.current.size === 2) {
+      const [p1, p2] = pointerArray();
+      const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+      const angle = (Math.atan2(p2.y - p1.y, p2.x - p1.x) * 180) / Math.PI;
+      gestureStart.current = { dist, angle, scale, rotation };
+      panStart.current = null;
+    } else if (pointers.current.size === 1 && !disablePan) {
+      const p = pointerArray()[0];
+      panStart.current = { x: p.x, y: p.y, panX: pan.x, panY: pan.y };
+    }
+  };
+  const handlePointerMove = (e) => {
+    if (!pointers.current.has(e.pointerId)) return;
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.current.size === 2 && gestureStart.current) {
+      const [p1, p2] = pointerArray();
+      const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+      const angle = (Math.atan2(p2.y - p1.y, p2.x - p1.x) * 180) / Math.PI;
+      const newScale = Math.min(5, Math.max(0.5, gestureStart.current.scale * (dist / gestureStart.current.dist)));
+      setScale(newScale);
+      setRotation(gestureStart.current.rotation + (angle - gestureStart.current.angle));
+    } else if (pointers.current.size === 1 && panStart.current && !disablePan) {
+      const p = pointerArray()[0];
+      setPan({ x: panStart.current.panX + (p.x - panStart.current.x), y: panStart.current.panY + (p.y - panStart.current.y) });
+    }
+  };
+  const handlePointerUp = (e) => {
+    pointers.current.delete(e.pointerId);
+    if (pointers.current.size < 2) gestureStart.current = null;
+    if (pointers.current.size === 1 && !disablePan) {
+      const p = pointerArray()[0];
+      panStart.current = { x: p.x, y: p.y, panX: pan.x, panY: pan.y };
+    } else if (pointers.current.size === 0) {
+      panStart.current = null;
+    }
+  };
+  const resetView = () => { setScale(1); setRotation(0); setPan({ x: 0, y: 0 }); };
+  const isAdjusted = scale !== 1 || rotation !== 0 || pan.x !== 0 || pan.y !== 0;
+
+  useImperativeHandle(ref, () => ({
+    centerOnPoint: (px, py) => {
+      const container = containerRef.current;
+      if (!container) return;
+      const svg = container.querySelector('svg');
+      if (!svg) return;
+      const ctm = svg.getScreenCTM();
+      if (!ctm) return;
+      const pt = svg.createSVGPoint();
+      pt.x = px; pt.y = py;
+      const screenPt = pt.matrixTransform(ctm);
+      const rect = container.getBoundingClientRect();
+      const targetX = rect.left + rect.width / 2, targetY = rect.top + rect.height / 2;
+      setPan((prev) => ({ x: prev.x + (targetX - screenPt.x), y: prev.y + (targetY - screenPt.y) }));
+    },
+  }));
+
+  return (
+    <div ref={containerRef} style={{ position: 'relative', overflow: 'hidden', touchAction: 'none', height: '100%' }}
+      onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerUp}>
+      <div style={{ height: '100%', transform: `translate(${pan.x}px, ${pan.y}px) rotate(${rotation}deg) scale(${scale})`, transformOrigin: 'center center' }}>
+        {children}
+      </div>
+      <button onClick={resetView} title="Tap to reset to north-up"
+        style={{ position: 'absolute', top: 10, right: 10, width: 44, height: 44, borderRadius: '50%', background: 'rgba(255,255,255,0.92)', border: `2px solid ${isAdjusted ? COLORS.accent : '#333'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 5, touchAction: 'none', boxShadow: '0 1px 4px rgba(0,0,0,0.35)' }}>
+        <div style={{ transform: `rotate(${-rotation}deg)`, fontWeight: 'bold', fontSize: 14, color: COLORS.accent, lineHeight: 1 }}>N</div>
+      </button>
+      {onCenterOnMe && (
+        <button onClick={onCenterOnMe} title="Center on me"
+          style={{ position: 'absolute', bottom: 10, right: 10, width: 44, height: 44, borderRadius: '50%', background: 'rgba(255,255,255,0.92)', border: `2px solid #333`, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 5, touchAction: 'none', boxShadow: '0 1px 4px rgba(0,0,0,0.35)', fontSize: 20 }}>
+          🎯
+        </button>
+      )}
+    </div>
+  );
+});
+
+// ---------- Map surface ----------
+function MapCanvas({ viewBoxWidth, viewBoxHeight, backgroundImageUrl, pinsToShow, linesToShow, placingPin, measureMode, pencilMode, drawingPoints, calibrating, refPoints, trail, myPosition, onMapTap, onFreehandPoint, onFreehandEnd, onPinTap, onLineTap }) {
+  const svgRef = useRef(null);
+  const isDrawingStroke = useRef(false);
+  const tapMode = placingPin || measureMode || calibrating;
+  const anyDrawMode = tapMode || pencilMode;
+  const vbWidth = viewBoxWidth || 560;
+  const vbHeight = viewBoxHeight || 400;
+
+  const toLocal = (clientX, clientY) => {
+    const svg = svgRef.current;
+    if (!svg) return null;
+    const screenCTM = svg.getScreenCTM();
+    if (!screenCTM) return null;
+    const pt = svg.createSVGPoint();
+    pt.x = clientX; pt.y = clientY;
+    const local = pt.matrixTransform(screenCTM.inverse());
+    return { x: Math.round(local.x), y: Math.round(local.y) };
+  };
+  const handleClick = (e) => {
+    if (!tapMode) return;
+    const local = toLocal(e.clientX, e.clientY);
+    if (local) onMapTap(local.x, local.y);
+  };
+  const handlePointerDown = (e) => {
+    if (!pencilMode) return;
+    const local = toLocal(e.clientX, e.clientY);
+    if (!local) return;
+    isDrawingStroke.current = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    onFreehandPoint(local.x, local.y);
+  };
+  const handlePointerMove = (e) => {
+    if (!pencilMode || !isDrawingStroke.current) return;
+    const local = toLocal(e.clientX, e.clientY);
+    if (local) onFreehandPoint(local.x, local.y);
+  };
+  const handlePointerUp = () => {
+    if (!pencilMode || !isDrawingStroke.current) return;
+    isDrawingStroke.current = false;
+    onFreehandEnd();
+  };
+
+  return (
+    <svg ref={svgRef} viewBox={`0 0 ${vbWidth} ${vbHeight}`} preserveAspectRatio="xMidYMid meet"
+      style={{ width: '100%', height: '100%', display: 'block', background: COLORS.surface, cursor: anyDrawMode ? 'crosshair' : 'default', touchAction: pencilMode ? 'none' : 'manipulation' }}
+      onClick={handleClick} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerUp}>
+      {backgroundImageUrl ? (
+        <image href={backgroundImageUrl} x="0" y="0" width={vbWidth} height={vbHeight} preserveAspectRatio="none" />
+      ) : (
+        <React.Fragment>
+          <rect width={vbWidth} height={vbHeight} fill={COLORS.surface} />
+          <text x={vbWidth / 2} y={vbHeight / 2} textAnchor="middle" fontSize="14" fill={COLORS.inkDim} fontFamily="Inter, sans-serif">No map loaded yet</text>
+        </React.Fragment>
+      )}
+
+      {trail && trail.length > 1 && (
+        <polyline points={trail.map((p) => `${p.x},${p.y}`).join(' ')} fill="none" stroke="#4285F4" strokeWidth="3" strokeOpacity="0.85" strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: 'none' }} />
+      )}
+
+      {(linesToShow || []).map((line) => {
+        const def = LINE_TYPES[line.type];
+        const pointsAttr = line.points.map((p) => `${p.x},${p.y}`).join(' ');
+        const strokeColor = line.color || def.color;
+        const strokeW = line.strokeWidth || 3;
+        return (
+          <g key={line.id}>
+            <polyline points={pointsAttr} fill="none" stroke="transparent" strokeWidth={Math.max(16, strokeW + 12)}
+              style={{ pointerEvents: anyDrawMode ? 'none' : 'stroke', cursor: 'pointer' }}
+              onClick={(e) => { e.stopPropagation(); if (!anyDrawMode) onLineTap(line.id); }} />
+            <polyline points={pointsAttr} fill="none" stroke={strokeColor} strokeWidth={strokeW} strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: 'none' }} />
+          </g>
+        );
+      })}
+
+      {(measureMode || pencilMode) && drawingPoints && drawingPoints.length > 0 && (
+        <g style={{ pointerEvents: 'none' }}>
+          <polyline points={drawingPoints.map((p) => `${p.x},${p.y}`).join(' ')} fill="none" stroke={COLORS.accent} strokeWidth="3" strokeDasharray={measureMode ? '6 4' : 'none'} strokeLinecap="round" strokeLinejoin="round" />
+          {measureMode && drawingPoints.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r="4" fill={COLORS.accent} stroke="#fff" strokeWidth="1.5" />)}
+        </g>
+      )}
+
+      {calibrating && (refPoints || []).map((p, i) => (
+        <g key={i} transform={`translate(${p.px}, ${p.py})`} style={{ pointerEvents: 'none' }}>
+          <circle r="7" fill={COLORS.accent} stroke="#fff" strokeWidth="2" />
+          <text textAnchor="middle" y="4" fontSize="10" fontWeight="bold" fill="#fff">{i + 1}</text>
+        </g>
+      ))}
+
+      {(pinsToShow || []).map((pin) => {
+        const def = PIN_TYPES[pin.type];
+        return (
+          <g key={pin.id} transform={`translate(${pin.x}, ${pin.y})`} onClick={(e) => { e.stopPropagation(); if (!anyDrawMode) onPinTap(pin.id); }} style={{ cursor: anyDrawMode ? 'crosshair' : 'pointer' }}>
+            <circle r="12" fill={def.color} stroke="#fff" strokeWidth="2" />
+            <text textAnchor="middle" y="5" fontSize="13">{def.icon}</text>
+          </g>
+        );
+      })}
+
+      {myPosition && (
+        <g transform={`translate(${myPosition.px}, ${myPosition.py})`} style={{ pointerEvents: 'none' }}>
+          <circle r="10" fill="#4285F4" fillOpacity="0.25" />
+          <circle r="6" fill="#4285F4" stroke="#fff" strokeWidth="2" />
+        </g>
+      )}
+    </svg>
+  );
+}
+
+function MapPinForm({ onSubmit, onCancel }) {
+  const [type, setType] = useState('hazard');
+  const [note, setNote] = useState('');
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 150, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'flex-end' }}>
+      <div className="w-full p-5" style={{ background: COLORS.bg, borderRadius: '16px 16px 0 0', border: `2px solid ${COLORS.line}`, borderBottom: 'none' }}>
+        <h2 className="font-display text-lg font-bold mb-3">Drop a pin</h2>
+        <div className="grid grid-cols-2 gap-2 mb-3">
+          {Object.entries(PIN_TYPES).map(([key, def]) => (
+            <button key={key} onClick={() => setType(key)} className="rounded-lg px-3 py-3 text-sm font-semibold flex items-center justify-center gap-2"
+              style={{ background: type === key ? def.color : COLORS.surfaceRaised, color: type === key ? '#fff' : COLORS.ink, border: `1px solid ${COLORS.line}` }}>
+              <span>{def.icon}</span>{def.label}
+            </button>
+          ))}
+        </div>
+        <TextInput value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional)" className="w-full mb-3" />
+        <div className="flex gap-2">
+          <Btn onClick={() => onSubmit(type, note)}>Drop pin</Btn>
+          <Btn variant="ghost" onClick={onCancel}>Cancel</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+function MapPinDetail({ pin, onDelete, onClose }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const def = PIN_TYPES[pin.type];
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 150, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'flex-end' }}>
+      <div className="w-full p-5" style={{ background: COLORS.bg, borderRadius: '16px 16px 0 0', border: `2px solid ${COLORS.line}`, borderBottom: 'none' }}>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-display text-lg font-bold flex items-center gap-2"><span>{def.icon}</span>{def.label}</h2>
+          <button onClick={onClose} className="text-2xl" style={{ color: COLORS.inkDim }}>✕</button>
+        </div>
+        {pin.note && <p className="text-sm mb-3">{pin.note}</p>}
+        <p className="text-xs mb-3" style={{ color: COLORS.inkDim }}>{fmtWhen(pin.time)}</p>
+        {confirmDelete ? (
+          <div className="rounded-lg p-3" style={{ background: COLORS.surfaceRaised }}>
+            <p className="text-sm mb-2" style={{ color: COLORS.inkDim }}>Delete this pin? This can't be undone.</p>
+            <div className="flex gap-2">
+              <Btn variant="danger" onClick={onDelete}>Yes, delete it</Btn>
+              <Btn variant="ghost" onClick={() => setConfirmDelete(false)}>Cancel</Btn>
+            </div>
+          </div>
+        ) : (
+          <button onClick={() => setConfirmDelete(true)} className="text-xs underline" style={{ color: '#E07A5F' }}>Delete this pin</button>
+        )}
+      </div>
+    </div>
+  );
+}
+function MapLineForm({ onSubmit, onCancel }) {
+  const [type, setType] = useState('road');
+  const [note, setNote] = useState('');
+  const [customColor, setCustomColor] = useState(null);
+  const [strokeWidth, setStrokeWidth] = useState(3);
+  const effectiveColor = customColor || LINE_TYPES[type].color;
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 150, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'flex-end' }}>
+      <div className="w-full p-5" style={{ background: COLORS.bg, borderRadius: '16px 16px 0 0', border: `2px solid ${COLORS.line}`, borderBottom: 'none', maxHeight: '85vh', overflowY: 'auto' }}>
+        <h2 className="font-display text-lg font-bold mb-3">Save this line</h2>
+        <div className="grid grid-cols-2 gap-2 mb-3">
+          {Object.entries(LINE_TYPES).map(([key, def]) => (
+            <button key={key} onClick={() => setType(key)} className="rounded-lg px-3 py-3 text-sm font-semibold flex items-center justify-center gap-2"
+              style={{ background: type === key ? def.color : COLORS.surfaceRaised, color: type === key ? '#fff' : COLORS.ink, border: `1px solid ${COLORS.line}` }}>
+              <span style={{ display: 'inline-block', width: 16, height: 3, background: type === key ? '#fff' : def.color, borderRadius: 2 }} />{def.label}
+            </button>
+          ))}
+        </div>
+        <p className="text-xs font-semibold mb-1" style={{ color: COLORS.inkDim }}>Color</p>
+        <div className="flex items-center gap-2 mb-3">
+          <label className="rounded-lg overflow-hidden flex-shrink-0" style={{ width: 36, height: 36, border: `1px solid ${COLORS.line}` }}>
+            <input type="color" value={effectiveColor} onChange={(e) => setCustomColor(e.target.value)} style={{ width: 48, height: 48, transform: 'translate(-6px, -6px)', border: 'none', padding: 0, cursor: 'pointer' }} />
+          </label>
+          <p className="text-xs flex-1" style={{ color: COLORS.inkDim }}>{customColor ? 'Custom color' : `Using ${LINE_TYPES[type].label}'s color — tap the swatch to override`}</p>
+          {customColor && <button onClick={() => setCustomColor(null)} className="text-xs underline flex-shrink-0" style={{ color: COLORS.accent }}>Reset</button>}
+        </div>
+        <p className="text-xs font-semibold mb-1" style={{ color: COLORS.inkDim }}>Thickness</p>
+        <div className="flex gap-2 mb-3">
+          {[{ label: 'Thin', w: 2 }, { label: 'Medium', w: 3 }, { label: 'Thick', w: 6 }].map((opt) => (
+            <button key={opt.w} onClick={() => setStrokeWidth(opt.w)} className="flex-1 rounded-lg py-2 flex flex-col items-center justify-center gap-1.5"
+              style={{ background: strokeWidth === opt.w ? COLORS.accent : COLORS.surfaceRaised, border: `1px solid ${COLORS.line}` }}>
+              <span style={{ display: 'block', width: 28, height: opt.w, background: strokeWidth === opt.w ? '#fff' : effectiveColor, borderRadius: 3 }} />
+              <span className="text-xs font-semibold" style={{ color: strokeWidth === opt.w ? '#fff' : COLORS.ink }}>{opt.label}</span>
+            </button>
+          ))}
+        </div>
+        <TextInput value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional)" className="w-full mb-3" />
+        <div className="flex gap-2">
+          <Btn onClick={() => onSubmit(type, note, customColor, strokeWidth)}>Save line</Btn>
+          <Btn variant="ghost" onClick={onCancel}>Cancel</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+function MapLineDetail({ line, map, unit, onDelete, onClose }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const def = LINE_TYPES[line.type];
+  const realLen = realLineLength(map, line.points, unit);
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 150, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'flex-end' }}>
+      <div className="w-full p-5" style={{ background: COLORS.bg, borderRadius: '16px 16px 0 0', border: `2px solid ${COLORS.line}`, borderBottom: 'none' }}>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-display text-lg font-bold flex items-center gap-2">
+            <span style={{ display: 'inline-block', width: 20, height: Math.max(4, line.strokeWidth || 3), background: line.color || def.color, borderRadius: 2 }} />{def.label}
+          </h2>
+          <button onClick={onClose} className="text-2xl" style={{ color: COLORS.inkDim }}>✕</button>
+        </div>
+        {line.note && <p className="text-sm mb-3">{line.note}</p>}
+        <p className="text-sm mb-1" style={{ color: COLORS.accent }}>
+          {realLen !== null ? `${realLen.toFixed(0)} ${unit === 'feet' ? 'ft' : 'm'}` : `${lineLength(line.points).toFixed(0)} map units (not calibrated for real measurements)`}
+        </p>
+        <p className="text-xs mb-3" style={{ color: COLORS.inkDim }}>{fmtWhen(line.time)}</p>
+        {confirmDelete ? (
+          <div className="rounded-lg p-3" style={{ background: COLORS.surfaceRaised }}>
+            <p className="text-sm mb-2" style={{ color: COLORS.inkDim }}>Delete this line? This can't be undone.</p>
+            <div className="flex gap-2">
+              <Btn variant="danger" onClick={onDelete}>Yes, delete it</Btn>
+              <Btn variant="ghost" onClick={() => setConfirmDelete(false)}>Cancel</Btn>
+            </div>
+          </div>
+        ) : (
+          <button onClick={() => setConfirmDelete(true)} className="text-xs underline" style={{ color: '#E07A5F' }}>Delete this line</button>
+        )}
+      </div>
+    </div>
+  );
+}
+function RefPointForm({ pointIndex, onSubmit, onCancel }) {
+  const [lat, setLat] = useState('');
+  const [lng, setLng] = useState('');
+  const [lngIsWest, setLngIsWest] = useState(true);
+  const [locating, setLocating] = useState(false);
+  const useMyLocation = () => {
+    if (!navigator.geolocation) { alert('Location is not available on this device.'); return; }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { setLat(String(pos.coords.latitude)); setLng(String(Math.abs(pos.coords.longitude))); setLngIsWest(pos.coords.longitude < 0); setLocating(false); },
+      () => { alert("Couldn't get your location — check location permissions and try again."); setLocating(false); },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+  const latNum = parseFloat(lat);
+  const lngMagnitude = parseFloat(lng);
+  const lngNum = isNaN(lngMagnitude) ? NaN : (lngIsWest ? -lngMagnitude : lngMagnitude);
+  const valid = !isNaN(latNum) && !isNaN(lngNum);
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 150, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'flex-end' }}>
+      <div className="w-full p-5" style={{ background: COLORS.bg, borderRadius: '16px 16px 0 0', border: `2px solid ${COLORS.line}`, borderBottom: 'none' }}>
+        <h2 className="font-display text-lg font-bold mb-1">Reference point {pointIndex + 1} of 2</h2>
+        <p className="text-xs mb-3" style={{ color: COLORS.inkDim }}>What's the real latitude/longitude of the exact spot you just tapped?</p>
+        <button onClick={useMyLocation} disabled={locating} className="text-xs underline mb-3 block" style={{ color: COLORS.accent }}>
+          {locating ? 'Finding your location…' : '📍 Use my current location (if standing there)'}
+        </button>
+        <TextInput value={lat} onChange={(e) => setLat(e.target.value)} placeholder="Latitude (e.g. 55.6745)" className="w-full mb-2" inputMode="decimal" />
+        <div className="flex gap-2 mb-1">
+          <TextInput value={lng} onChange={(e) => setLng(e.target.value)} placeholder="Longitude (e.g. 114.1097)" className="flex-1" inputMode="decimal" />
+          <button onClick={() => setLngIsWest((w) => !w)} className="rounded-lg px-4 text-sm font-semibold flex-shrink-0" style={{ background: COLORS.surfaceRaised, color: COLORS.ink, border: `1px solid ${COLORS.line}` }}>
+            {lngIsWest ? 'West' : 'East'}
+          </button>
+        </div>
+        <p className="text-xs mb-3" style={{ color: COLORS.inkDim }}>Type the number without a minus sign — tap "West"/"East" to flip it. Leave it on West for anywhere in Alberta.</p>
+        <div className="flex gap-2">
+          <Btn onClick={() => valid && onSubmit(latNum, lngNum)} disabled={!valid}>Save point {pointIndex + 1}</Btn>
+          <Btn variant="ghost" onClick={onCancel}>Cancel</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Settings panel: manage maps, clear trail, units ----------
+function SettingsPanel({ maps, onAddMap, addingMap, onDeleteMap, onSelectMap, selectedMapId, onCalibrate, trailPaused, onToggleTrailPaused, onClearTrail, unit, onSetUnit, onClose }) {
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [confirmClearTrail, setConfirmClearTrail] = useState(false);
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 140, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'flex-end' }}>
+      <div className="w-full p-5" style={{ background: COLORS.bg, borderRadius: '16px 16px 0 0', maxHeight: '85vh', overflowY: 'auto', border: `2px solid ${COLORS.line}`, borderBottom: 'none' }}>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-display text-lg font-bold">⚙️ Settings</h2>
+          <button onClick={onClose} className="text-2xl" style={{ color: COLORS.inkDim }}>✕</button>
+        </div>
+
+        <h3 className="font-display text-sm font-bold mb-2">Maps on this iPad</h3>
+        {maps.length > 0 && (
+          <div className="space-y-2 mb-3">
+            {maps.map((m) => (
+              <div key={m.id} className="rounded-lg p-3 flex items-center justify-between gap-2" style={{ background: m.id === selectedMapId ? COLORS.surfaceRaised : COLORS.surface, border: `1px solid ${m.id === selectedMapId ? COLORS.accent : COLORS.line}` }}>
+                <button onClick={() => onSelectMap(m.id)} className="text-left flex-1">
+                  <span className="text-sm font-semibold block">{m.name}</span>
+                  <span className="text-xs" style={{ color: COLORS.accent }}>{m.geoCorners ? '🛰️ Georeferenced' : (isMapGeoreferenced(m) ? '🗺️ Georeferenced (manual)' : '⬜ Not calibrated yet')}</span>
+                </button>
+                {confirmDeleteId === m.id ? (
+                  <div className="flex gap-1 flex-shrink-0">
+                    <button onClick={() => { onDeleteMap(m.id); setConfirmDeleteId(null); }} className="text-xs underline" style={{ color: '#E07A5F' }}>Confirm</button>
+                    <button onClick={() => setConfirmDeleteId(null)} className="text-xs underline" style={{ color: COLORS.inkDim }}>Cancel</button>
+                  </div>
+                ) : (
+                  <button onClick={() => setConfirmDeleteId(m.id)} className="text-xs underline flex-shrink-0" style={{ color: '#E07A5F' }}>Delete</button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        <label className="block text-center rounded-lg py-3 mb-5 cursor-pointer font-display font-semibold uppercase tracking-wide text-sm" style={{ background: COLORS.surfaceRaised, border: `2px dashed ${COLORS.line}`, color: COLORS.accent }}>
+          {addingMap ? 'Processing…' : '📁 Add map from Files'}
+          <input type="file" accept="application/pdf" className="hidden" disabled={addingMap} onChange={(e) => { if (e.target.files[0]) onAddMap(e.target.files[0]); e.target.value = ''; }} />
+        </label>
+
+        <div className="h-px my-4" style={{ background: COLORS.line }} />
+
+        {selectedMapId && (
+          <React.Fragment>
+            <h3 className="font-display text-sm font-bold mb-2">Current map</h3>
+            <Btn variant="ghost" className="w-full mb-4" onClick={onCalibrate}>📍 Calibrate manually (2 points)</Btn>
+          </React.Fragment>
+        )}
+
+        <h3 className="font-display text-sm font-bold mb-2">Your trail</h3>
+        <div className="flex gap-2 mb-2">
+          <Btn variant="ghost" onClick={onToggleTrailPaused}>{trailPaused ? '▶ Resume recording' : '⏸ Pause recording'}</Btn>
+        </div>
+        {confirmClearTrail ? (
+          <div className="rounded-lg p-3 mb-4" style={{ background: COLORS.surfaceRaised }}>
+            <p className="text-sm mb-2" style={{ color: COLORS.inkDim }}>Clear your entire trail history? This can't be undone.</p>
+            <div className="flex gap-2">
+              <Btn variant="danger" onClick={() => { onClearTrail(); setConfirmClearTrail(false); }}>Yes, clear it</Btn>
+              <Btn variant="ghost" onClick={() => setConfirmClearTrail(false)}>Cancel</Btn>
+            </div>
+          </div>
+        ) : (
+          <button onClick={() => setConfirmClearTrail(true)} className="text-xs underline mb-4 block" style={{ color: '#E07A5F' }}>Clear trail history</button>
+        )}
+
+        <h3 className="font-display text-sm font-bold mb-2">Measurement units</h3>
+        <div className="flex gap-2">
+          <Btn variant={unit === 'meters' ? 'primary' : 'ghost'} onClick={() => onSetUnit('meters')}>Meters</Btn>
+          <Btn variant={unit === 'feet' ? 'primary' : 'ghost'} onClick={() => onSetUnit('feet')}>Feet</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Main app ----------
+function App() {
+  const [maps, setMaps] = useState(() => cacheGet('maps', []));
+  const [selectedMapId, setSelectedMapId] = useState(() => cacheGet('selectedMapId', null));
+  const [addingMap, setAddingMap] = useState(false);
+  const [pins, setPins] = useState(() => cacheGet('pins', []));
+  const [lines, setLines] = useState(() => cacheGet('lines', []));
+  const [trail, setTrail] = useState(() => cacheGet('trail', []));
+  const [trailPaused, setTrailPaused] = useState(() => cacheGet('trailPaused', false));
+  const [unit, setUnit] = useState(() => cacheGet('unit', 'meters'));
+  const [myLiveLocation, setMyLiveLocation] = useState(null);
+
+  const [placingPin, setPlacingPin] = useState(false);
+  const [measureMode, setMeasureMode] = useState(false);
+  const [pencilMode, setPencilMode] = useState(false);
+  const [linePoints, setLinePoints] = useState([]);
+  const [pendingLineSubmit, setPendingLineSubmit] = useState(false);
+  const [pendingPinPixel, setPendingPinPixel] = useState(null);
+  const [openPin, setOpenPin] = useState(null);
+  const [openLine, setOpenLine] = useState(null);
+  const [calibratingMap, setCalibratingMap] = useState(false);
+  const [calibrationPointIndex, setCalibrationPointIndex] = useState(0);
+  const [pendingCalibrationPixel, setPendingCalibrationPixel] = useState(null);
+  const [showSettings, setShowSettings] = useState(false);
+
+  const viewportRef = useRef(null);
+
+  const currentMap = maps.find((m) => m.id === selectedMapId) || maps[0] || null;
+  const currentMapGeoreferenced = currentMap && isMapGeoreferenced(currentMap);
+  const currentMapImageSrc = useMapImageSrc(currentMap);
+
+  // Blue dot — runs continuously while the app is open.
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => setMyLiveLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 0 }
+    );
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, []);
+
+  // Trail — accumulates forever, in real lat/lng, independent of which map
+  // is currently open. Converted to this map's pixel space only for display.
+  useEffect(() => {
+    if (trailPaused) return;
+    if (!navigator.geolocation) return;
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const point = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setTrail((prev) => {
+          const last = prev[prev.length - 1];
+          if (last && last.lat === point.lat && last.lng === point.lng) return prev;
+          const next = [...prev, point];
+          cacheSet('trail', next);
+          return next;
+        });
+      },
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 0 }
+    );
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [trailPaused]);
+
+  useEffect(() => { cacheSet('maps', maps); }, [maps]);
+  useEffect(() => { cacheSet('selectedMapId', selectedMapId); }, [selectedMapId]);
+  useEffect(() => { cacheSet('pins', pins); }, [pins]);
+  useEffect(() => { cacheSet('lines', lines); }, [lines]);
+  useEffect(() => { cacheSet('trailPaused', trailPaused); }, [trailPaused]);
+  useEffect(() => { cacheSet('unit', unit); }, [unit]);
+
+  const addMapFromFile = async (file) => {
+    setAddingMap(true);
+    try {
+      const { blob, width, height, geoData } = await renderPdfFirstPageToBlob(file);
+      const id = uid();
+      await idbSetMapImageBlob(id, blob);
+      const record = {
+        id, name: file.name.replace(/\.pdf$/i, ''),
+        imageWidth: width, imageHeight: height,
+        geoCorners: geoData ? geoData.corners : undefined,
+        geoBBoxFraction: geoData ? geoData.bboxFraction : undefined,
+        refPoints: [], addedAt: new Date().toISOString(),
+      };
+      const next = [...maps, record];
+      setMaps(next);
+      setSelectedMapId(id);
+    } catch (e) {
+      alert("Couldn't load that PDF — " + (e.message || 'try a different file.'));
+    }
+    setAddingMap(false);
+  };
+  const deleteMap = async (mapId) => {
+    await idbDeleteMapImageBlob(mapId);
+    const next = maps.filter((m) => m.id !== mapId);
+    setMaps(next);
+    setPins((p) => p.filter((pin) => pin.mapId !== mapId));
+    setLines((l) => l.filter((ln) => ln.mapId !== mapId));
+    if (selectedMapId === mapId) setSelectedMapId(next[0] ? next[0].id : null);
+  };
+  const patchMap = (mapId, patch) => setMaps((prev) => prev.map((m) => (m.id === mapId ? { ...m, ...patch } : m)));
+
+  const mapPins = pins.filter((p) => currentMap && p.mapId === currentMap.id);
+  const mapLines = lines.filter((l) => currentMap && l.mapId === currentMap.id);
+
+  const myPosition = (currentMap && currentMapGeoreferenced && myLiveLocation) ? latLngToPixel(currentMap, myLiveLocation.lat, myLiveLocation.lng) : null;
+  const trailPixels = (currentMap && currentMapGeoreferenced)
+    ? trail.map((p) => latLngToPixel(currentMap, p.lat, p.lng)).filter(Boolean).map((p) => ({ x: p.px, y: p.py }))
+    : [];
+
+  const exitAllModes = () => { setPlacingPin(false); setMeasureMode(false); setPencilMode(false); setLinePoints([]); setCalibratingMap(false); setCalibrationPointIndex(0); setPendingCalibrationPixel(null); };
+
+  const handleMapTap = (x, y) => {
+    if (calibratingMap) { setPendingCalibrationPixel({ px: x, py: y }); return; }
+    if (placingPin) { setPendingPinPixel({ x, y }); return; }
+    if (measureMode) { setLinePoints((prev) => [...prev, { x, y }]); return; }
+  };
+  const handleFreehandPoint = (x, y) => setLinePoints((prev) => [...prev, { x, y }]);
+  const handleFreehandEnd = () => { if (linePoints.length >= 2) setPendingLineSubmit(true); };
+
+  return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', color: COLORS.ink, fontFamily: 'Inter, sans-serif' }}>
+      <div className="px-3 py-2 flex items-center justify-between flex-shrink-0" style={{ borderBottom: `1px solid ${COLORS.line}` }}>
+        <div className="flex-1 min-w-0">
+          {maps.length > 1 ? (
+            <select value={currentMap ? currentMap.id : ''} onChange={(e) => setSelectedMapId(e.target.value)}
+              className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none" style={{ background: COLORS.surfaceRaised, color: COLORS.ink, border: `1px solid ${COLORS.line}` }}>
+              {maps.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+          ) : (
+            <p className="text-sm font-display font-bold truncate">{currentMap ? currentMap.name : 'Harder Field Map'}</p>
+          )}
+        </div>
+        <button onClick={() => setShowSettings(true)} className="ml-3 flex-shrink-0 text-xl" style={{ color: COLORS.inkDim }} title="Settings">⚙️</button>
+      </div>
+
+      <div className="px-3 py-2 flex gap-2 flex-wrap flex-shrink-0">
+        <button onClick={() => { const next = !placingPin; exitAllModes(); setPlacingPin(next); }}
+          className="text-xs font-semibold px-3 py-2 rounded-lg" style={{ background: placingPin ? COLORS.accent : COLORS.surfaceRaised, color: placingPin ? COLORS.ink2 : COLORS.ink, border: `1px solid ${COLORS.line}` }}>
+          {placingPin ? 'Cancel' : '📍 Drop a pin'}
+        </button>
+        <button onClick={() => { const next = !measureMode; exitAllModes(); setMeasureMode(next); }}
+          className="text-xs font-semibold px-3 py-2 rounded-lg" style={{ background: measureMode ? COLORS.accent : COLORS.surfaceRaised, color: measureMode ? COLORS.ink2 : COLORS.ink, border: `1px solid ${COLORS.line}` }}>
+          {measureMode ? 'Cancel' : '📏 Draw & Measure'}
+        </button>
+        <button onClick={() => { const next = !pencilMode; exitAllModes(); setPencilMode(next); }}
+          className="text-xs font-semibold px-3 py-2 rounded-lg" style={{ background: pencilMode ? COLORS.accent : COLORS.surfaceRaised, color: pencilMode ? COLORS.ink2 : COLORS.ink, border: `1px solid ${COLORS.line}` }}>
+          {pencilMode ? 'Cancel' : '✏️ Pencil'}
+        </button>
+        {measureMode && linePoints.length >= 2 && (
+          <button onClick={() => setPendingLineSubmit(true)} className="text-xs font-semibold px-3 py-2 rounded-lg" style={{ background: COLORS.accent, color: COLORS.ink2 }}>✓ Done</button>
+        )}
+      </div>
+
+      <div className="flex-1 min-h-0 px-3 pb-3">
+        <div className="rounded-xl overflow-hidden h-full" style={{ border: `2px solid ${COLORS.line}` }}>
+          <GestureMapViewport ref={viewportRef} disablePan={placingPin || measureMode || pencilMode || calibratingMap}
+            onCenterOnMe={myPosition ? () => viewportRef.current && viewportRef.current.centerOnPoint(myPosition.px, myPosition.py) : null}>
+            <MapCanvas
+              viewBoxWidth={currentMap ? currentMap.imageWidth : 560}
+              viewBoxHeight={currentMap ? currentMap.imageHeight : 400}
+              backgroundImageUrl={currentMapImageSrc}
+              pinsToShow={mapPins}
+              linesToShow={mapLines}
+              placingPin={placingPin}
+              measureMode={measureMode}
+              pencilMode={pencilMode}
+              drawingPoints={linePoints}
+              calibrating={calibratingMap}
+              refPoints={currentMap ? currentMap.refPoints : []}
+              trail={trailPixels}
+              myPosition={myPosition}
+              onMapTap={handleMapTap}
+              onFreehandPoint={handleFreehandPoint}
+              onFreehandEnd={handleFreehandEnd}
+              onPinTap={(id) => setOpenPin(mapPins.find((p) => p.id === id))}
+              onLineTap={(id) => setOpenLine(mapLines.find((l) => l.id === id))}
+            />
+          </GestureMapViewport>
+        </div>
+      </div>
+
+      {!currentMapGeoreferenced && currentMap && (
+        <p className="text-xs text-center px-3 pb-2" style={{ color: '#E3A23C' }}>
+          This map isn't calibrated yet — the blue dot and real measurements won't work until you calibrate it in Settings.
+        </p>
+      )}
+      {!currentMap && (
+        <p className="text-xs text-center px-3 pb-2" style={{ color: COLORS.inkDim }}>
+          No map loaded — tap ⚙️ to add one from Files.
+        </p>
+      )}
+
+      {pendingPinPixel && (
+        <MapPinForm
+          onSubmit={(type, note) => {
+            setPins((prev) => [...prev, { id: uid(), mapId: currentMap.id, x: pendingPinPixel.x, y: pendingPinPixel.y, type, note: note.trim(), time: new Date().toISOString() }]);
+            setPendingPinPixel(null);
+            setPlacingPin(false);
+          }}
+          onCancel={() => setPendingPinPixel(null)}
+        />
+      )}
+      {openPin && (
+        <MapPinDetail pin={openPin} onDelete={() => { setPins((prev) => prev.filter((p) => p.id !== openPin.id)); setOpenPin(null); }} onClose={() => setOpenPin(null)} />
+      )}
+      {pendingLineSubmit && (
+        <MapLineForm
+          onSubmit={(type, note, color, strokeWidth) => {
+            setLines((prev) => [...prev, { id: uid(), mapId: currentMap.id, type, note: note.trim(), color, strokeWidth, points: linePoints, time: new Date().toISOString() }]);
+            setPendingLineSubmit(false);
+            setLinePoints([]);
+            setMeasureMode(false);
+            setPencilMode(false);
+          }}
+          onCancel={() => { setPendingLineSubmit(false); setLinePoints([]); }}
+        />
+      )}
+      {openLine && (
+        <MapLineDetail line={openLine} map={currentMap} unit={unit} onDelete={() => { setLines((prev) => prev.filter((l) => l.id !== openLine.id)); setOpenLine(null); }} onClose={() => setOpenLine(null)} />
+      )}
+      {pendingCalibrationPixel && currentMap && (
+        <RefPointForm
+          pointIndex={calibrationPointIndex}
+          onCancel={() => setPendingCalibrationPixel(null)}
+          onSubmit={(lat, lng) => {
+            const refPoints = [...(currentMap.refPoints || [])];
+            refPoints[calibrationPointIndex] = { px: pendingCalibrationPixel.px, py: pendingCalibrationPixel.py, lat, lng };
+            patchMap(currentMap.id, { refPoints });
+            setPendingCalibrationPixel(null);
+            if (calibrationPointIndex === 0) { setCalibrationPointIndex(1); } else { setCalibratingMap(false); setCalibrationPointIndex(0); }
+          }}
+        />
+      )}
+      {showSettings && (
+        <SettingsPanel
+          maps={maps}
+          onAddMap={addMapFromFile}
+          addingMap={addingMap}
+          onDeleteMap={deleteMap}
+          onSelectMap={(id) => { setSelectedMapId(id); setShowSettings(false); }}
+          selectedMapId={selectedMapId}
+          onCalibrate={() => { exitAllModes(); setCalibratingMap(true); setShowSettings(false); }}
+          trailPaused={trailPaused}
+          onToggleTrailPaused={() => setTrailPaused((v) => !v)}
+          onClearTrail={() => setTrail([]) || cacheSet('trail', [])}
+          unit={unit}
+          onSetUnit={setUnit}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null, info: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { this.setState({ info }); }
+  render() {
+    if (this.state.error) {
+      const msg = (this.state.error ? (this.state.error.message || String(this.state.error)) : 'Unknown error') +
+        (this.state.error && this.state.error.stack ? '\n\n' + this.state.error.stack : '') +
+        (this.state.info && this.state.info.componentStack ? '\n\nComponent stack:' + this.state.info.componentStack : '');
+      return (
+        <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem', fontFamily: 'sans-serif', color: '#ECE8DF', background: '#1B1E20', textAlign: 'center' }}>
+          <div style={{ maxWidth: 520 }}>
+            <h1 style={{ color: '#E8622C', fontSize: '1.4rem' }}>Something broke on this screen</h1>
+            <p style={{ marginTop: '1rem' }}>Screenshot this and send it back:</p>
+            <button onClick={() => window.location.reload()} style={{ marginTop: '1rem', padding: '0.75rem 1.5rem', fontSize: '1rem', fontWeight: 'bold', background: '#7FA37E', color: '#1B1F19', border: 'none', borderRadius: 8, cursor: 'pointer' }}>Try again</button>
+            <pre style={{ textAlign: 'left', background: '#242829', padding: '1rem', borderRadius: 8, overflow: 'auto', fontSize: '0.7rem', whiteSpace: 'pre-wrap', marginTop: '1.5rem' }}>{msg}</pre>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<ErrorBoundary><App /></ErrorBoundary>);
+} catch (__fatalErr) {
+  showFatalError((__fatalErr && __fatalErr.stack) ? __fatalErr.stack : String(__fatalErr));
+}
+</script>
+
+</body>
+</html>
