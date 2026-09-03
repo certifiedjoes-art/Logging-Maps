@@ -156,15 +156,13 @@ function idbOpenMapDB() {
   });
 }
 async function idbSetMapImageBlob(mapId, blob) {
-  try {
-    const db = await idbOpenMapDB();
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction('images', 'readwrite');
-      tx.objectStore('images').put(blob, mapId);
-      tx.oncomplete = resolve;
-      tx.onerror = () => reject(tx.error);
-    });
-  } catch (e) {}
+  const db = await idbOpenMapDB();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction('images', 'readwrite');
+    tx.objectStore('images').put(blob, mapId);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
 }
 async function idbGetMapImageBlob(mapId) {
   try {
@@ -753,43 +751,68 @@ function RefPointForm({ pointIndex, onSubmit, onCancel }) {
 // iOS — Apple only lets AirDrop hand files to native apps registered for
 // specific file types. This is the practical alternative: AirDrop the two
 // files to the iPad (they land in Files), then pick them here.
+//
+// Two separate single-file pickers rather than one combined multi-select
+// — iOS's file picker is unreliable about letting you select across two
+// different file-type categories (an image and a document) in the same
+// multi-select pass, which is almost certainly why nothing happened
+// before: the picker likely only handed back one of the two files, or
+// none, with no feedback either way.
 function ImportMapForm({ onImport, importing, onCancel }) {
+  const [imageFile, setImageFile] = useState(null);
+  const [jsonFile, setJsonFile] = useState(null);
   const [error, setError] = useState(null);
-  const handleFiles = async (fileList) => {
+
+  const canImport = imageFile && jsonFile && !importing;
+
+  const doImport = async () => {
     setError(null);
-    const files = Array.from(fileList || []);
-    const jsonFile = files.find((f) => f.name.toLowerCase().endsWith('.json'));
-    const imageFile = files.find((f) => /\.(png|jpe?g)$/i.test(f.name));
-    if (!jsonFile || !imageFile) {
-      setError('Select both files together — the .png (or .jpg) and the matching .json exported from the main app.');
+    let geoData;
+    try {
+      const text = await jsonFile.text();
+      geoData = JSON.parse(text);
+    } catch (e) {
+      setError("Couldn't read that .json file — pick it again, or re-share from the main app.");
+      return;
+    }
+    if (!geoData || !geoData.imageWidth || !geoData.imageHeight) {
+      setError("That .json file doesn't look like a map export — missing image dimensions. Make sure it's the file from the main app's share, not something else.");
       return;
     }
     try {
-      const text = await jsonFile.text();
-      const geoData = JSON.parse(text);
-      if (!geoData.imageWidth || !geoData.imageHeight) {
-        setError("That JSON file doesn't look like a map export — missing image dimensions.");
-        return;
-      }
       await onImport(geoData, imageFile);
     } catch (e) {
-      setError("Couldn't read that JSON file — make sure it's the unedited file from the main app's share.");
+      setError("Import failed — " + (e && e.message ? e.message : 'try again.'));
     }
   };
+
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 150, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'flex-end' }}>
       <div className="w-full p-5" style={{ background: COLORS.bg, borderRadius: '16px 16px 0 0', border: `2px solid ${COLORS.line}`, borderBottom: 'none' }}>
         <h2 className="font-display text-lg font-bold mb-2">Import a shared map</h2>
         <p className="text-xs mb-3" style={{ color: COLORS.inkDim }}>
-          AirDrop the two files from the main app (the .png and its matching .json) to this iPad first — they'll land in Files. Then select both of them together below.
+          AirDrop the two files from the main app to this iPad first (Save to Files if prompted), then pick each one below — one at a time.
         </p>
         {error && <p className="text-xs mb-3" style={{ color: '#E07A5F' }}>{error}</p>}
-        <label className="block text-center rounded-lg py-3 mb-3 cursor-pointer font-display font-semibold uppercase tracking-wide text-sm" style={{ background: COLORS.surfaceRaised, border: `2px dashed ${COLORS.line}`, color: COLORS.accent }}>
-          {importing ? 'Importing…' : '📁 Choose both files from Files'}
-          <input type="file" accept=".png,.jpg,.jpeg,.json,image/png,image/jpeg,application/json" multiple className="hidden" disabled={importing}
-            onChange={(e) => { const files = e.target.files; e.target.value = ''; if (files && files.length) handleFiles(files); }} />
+
+        <p className="text-xs font-semibold mb-1" style={{ color: COLORS.inkDim }}>1. The map image (.png or .jpg)</p>
+        <label className="block text-center rounded-lg py-3 mb-3 cursor-pointer font-display font-semibold text-sm" style={{ background: COLORS.surfaceRaised, border: `2px dashed ${imageFile ? COLORS.accent : COLORS.line}`, color: imageFile ? COLORS.accent : COLORS.ink }}>
+          {imageFile ? `✓ ${imageFile.name}` : '📁 Choose the image file'}
+          <input type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg" className="hidden" disabled={importing}
+            onChange={(e) => { const f = e.target.files[0]; e.target.value = ''; if (f) { setImageFile(f); setError(null); } }} />
         </label>
-        <Btn variant="ghost" className="w-full" onClick={onCancel}>Cancel</Btn>
+
+        <p className="text-xs font-semibold mb-1" style={{ color: COLORS.inkDim }}>2. The matching .json file</p>
+        <label className="block text-center rounded-lg py-3 mb-4 cursor-pointer font-display font-semibold text-sm" style={{ background: COLORS.surfaceRaised, border: `2px dashed ${jsonFile ? COLORS.accent : COLORS.line}`, color: jsonFile ? COLORS.accent : COLORS.ink }}>
+          {jsonFile ? `✓ ${jsonFile.name}` : '📁 Choose the .json file'}
+          <input type="file" accept="application/json,.json" className="hidden" disabled={importing}
+            onChange={(e) => { const f = e.target.files[0]; e.target.value = ''; if (f) { setJsonFile(f); setError(null); } }} />
+        </label>
+
+        <div className="flex gap-2">
+          <Btn onClick={doImport} disabled={!canImport}>{importing ? 'Importing…' : 'Import this map'}</Btn>
+          <Btn variant="ghost" onClick={onCancel}>Cancel</Btn>
+        </div>
       </div>
     </div>
   );
