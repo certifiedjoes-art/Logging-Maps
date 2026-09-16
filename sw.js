@@ -6,6 +6,27 @@
 // Bump this version string any time index.html (or anything else here)
 // changes and gets re-uploaded — that's what makes the update actually
 // show up instead of the iPad quietly keeping the old cached copy forever.
+// Import the functions you need from the SDKs you need
+import { initializeApp } from "firebase/app";
+import { getAnalytics } from "firebase/analytics";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
+
+// Your web app's Firebase configuration
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+const firebaseConfig = {
+  apiKey: "AIzaSyBrR_SaNVWQ70JkRUwRjOtVfvmpK88usmk",
+  authDomain: "harder-maps.firebaseapp.com",
+  projectId: "harder-maps",
+  storageBucket: "harder-maps.firebasestorage.app",
+  messagingSenderId: "569399372469",
+  appId: "1:569399372469:web:8d30660b94c3b41f2c2cfc",
+  measurementId: "G-KNP78W7089"
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const analytics = getAnalytics(app);
 const CACHE_NAME = 'harder-field-map-v3';
 const PRECACHE_URLS = [
   './',
