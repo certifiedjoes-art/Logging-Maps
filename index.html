@@ -846,7 +846,7 @@ function ShareLoginForm({ onSignedIn, onCancel }) {
 }
 
 // ---------- Settings panel: manage maps, clear trail, units ----------
-function SettingsPanel({ maps, onAddMap, addingMap, onDeleteMap, onRenameMap, onSelectMap, selectedMapId, onCalibrate, trailPaused, onToggleTrailPaused, onClearTrail, unit, onSetUnit, authUser, onSignOut, onUploadShared, uploadingShared, uploadError, onClose }) {
+function SettingsPanel({ maps, onDeleteMap, onRenameMap, onSelectMap, selectedMapId, onCalibrate, trailPaused, onToggleTrailPaused, onClearTrail, unit, onSetUnit, authUser, onSignOut, onUploadShared, uploadingShared, uploadError, onClose }) {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [confirmClearTrail, setConfirmClearTrail] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
@@ -899,10 +899,6 @@ function SettingsPanel({ maps, onAddMap, addingMap, onDeleteMap, onRenameMap, on
             ))}
           </div>
         )}
-        <label className="block text-center rounded-lg py-3 mb-3 cursor-pointer font-display font-semibold uppercase tracking-wide text-sm" style={{ background: COLORS.surfaceRaised, border: `2px dashed ${COLORS.line}`, color: COLORS.accent }}>
-          {addingMap ? 'Processing…' : '📁 Add map from Files (this device only)'}
-          <input type="file" accept="application/pdf" className="hidden" disabled={addingMap} onChange={(e) => { if (e.target.files[0]) onAddMap(e.target.files[0]); e.target.value = ''; }} />
-        </label>
 
         <div className="h-px my-4" style={{ background: COLORS.line }} />
 
@@ -963,7 +959,6 @@ function SettingsPanel({ maps, onAddMap, addingMap, onDeleteMap, onRenameMap, on
 function App() {
   const [maps, setMaps] = useState(() => cacheGet('maps', []));
   const [selectedMapId, setSelectedMapId] = useState(() => cacheGet('selectedMapId', null));
-  const [addingMap, setAddingMap] = useState(false);
   const [pins, setPins] = useState(() => cacheGet('pins', []));
   const [lines, setLines] = useState(() => cacheGet('lines', []));
   const [trail, setTrail] = useState(() => cacheGet('trail', []));
@@ -1110,27 +1105,6 @@ function App() {
   useEffect(() => { cacheSet('trailPaused', trailPaused); }, [trailPaused]);
   useEffect(() => { cacheSet('unit', unit); }, [unit]);
 
-  const addMapFromFile = async (file) => {
-    setAddingMap(true);
-    try {
-      const { blob, width, height, geoData } = await renderPdfFirstPageToBlob(file);
-      const id = uid();
-      await idbSetMapImageBlob(id, blob);
-      const record = {
-        id, name: file.name.replace(/\.pdf$/i, ''),
-        imageWidth: width, imageHeight: height,
-        geoCorners: geoData ? geoData.corners : undefined,
-        geoBBoxFraction: geoData ? geoData.bboxFraction : undefined,
-        refPoints: [], addedAt: new Date().toISOString(),
-      };
-      const next = [...maps, record];
-      setMaps(next);
-      setSelectedMapId(id);
-    } catch (e) {
-      alert("Couldn't load that PDF — " + (e.message || 'try a different file.'));
-    }
-    setAddingMap(false);
-  };
   const deleteMap = async (mapId) => {
     await idbDeleteMapImageBlob(mapId);
     const next = maps.filter((m) => m.id !== mapId);
@@ -1244,7 +1218,7 @@ function App() {
       )}
       {!currentMap && (
         <p className="text-sm text-center rounded-lg" style={{ position: 'absolute', top: '50%', left: 20, right: 20, transform: 'translateY(-50%)', zIndex: 6, color: COLORS.inkDim, ...pill, padding: '10px' }}>
-          No map loaded — tap ⚙️ to add one from Files.
+          No map loaded — upload one from ⚙️ Settings, or wait for signal if one's already been shared.
         </p>
       )}
 
@@ -1292,8 +1266,6 @@ function App() {
       {showSettings && (
         <SettingsPanel
           maps={maps}
-          onAddMap={addMapFromFile}
-          addingMap={addingMap}
           onDeleteMap={deleteMap}
           onRenameMap={renameMap}
           onSelectMap={(id) => { setSelectedMapId(id); setShowSettings(false); }}
