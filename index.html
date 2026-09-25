@@ -5,12 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
 <title>Harder Field Map</title>
 
+<!-- Registers the service worker as the very first thing this page does,
+     so it has the best chance of being ready to serve everything from
+     cache on a cold, signal-less launch. -->
 <script>
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
 </script>
 
+<!-- PWA / Add to Home Screen -->
 <meta name="theme-color" content="#1B1F19" />
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -20,6 +24,7 @@
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
 <link rel="manifest" href="manifest.json" />
 
+<!-- Fonts -->
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
 
@@ -32,6 +37,7 @@
 <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js" onload="window.__loadStatus['react-dom']='ok'" onerror="window.__loadStatus['react-dom']='FAILED'"></script>
 <script crossorigin src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.6/babel.min.js" onload="window.__loadStatus['babel']='ok'" onerror="window.__loadStatus['babel']='FAILED'"></script>
 
+<!-- PDF.js — renders an uploaded GeoPDF's first page to a canvas, client-side. -->
 <script type="module">
   import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.mjs";
   window.pdfjsLib = pdfjsLib;
@@ -156,13 +162,15 @@ function idbOpenMapDB() {
   });
 }
 async function idbSetMapImageBlob(mapId, blob) {
-  const db = await idbOpenMapDB();
-  await new Promise((resolve, reject) => {
-    const tx = db.transaction('images', 'readwrite');
-    tx.objectStore('images').put(blob, mapId);
-    tx.oncomplete = resolve;
-    tx.onerror = () => reject(tx.error);
-  });
+  try {
+    const db = await idbOpenMapDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('images', 'readwrite');
+      tx.objectStore('images').put(blob, mapId);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) {}
 }
 async function idbGetMapImageBlob(mapId) {
   try {
@@ -284,6 +292,9 @@ function latLngToPixel(map, lat, lng) {
   if (map && map.geoCorners && map.geoCorners.length === 4) {
     const corners = map.geoCorners;
     const bf = map.geoBBoxFraction;
+    // Inverse bilinear via iterative search (Newton-ish two-step) — good
+    // enough accuracy for a UTM-zone-sized block map with near-rectangular
+    // corner geometry, which is what these mill exports are.
     let u = 0.5, v = 0.5;
     for (let i = 0; i < 6; i++) {
       const guess = bilinearGeoInterp(corners, u, v);
@@ -319,30 +330,6 @@ function haversineMeters(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 const isMapGeoreferenced = (map) => !!(map && ((map.geoCorners && map.geoCorners.length === 4) || (map.refPoints && map.refPoints.length >= 2)));
-
-// --- PNG metadata extraction — reads back the georeferencing data a
-// shared map has embedded inside itself as a tEXt chunk (see
-// embedJsonInPng on the main app's side), so importing a shared map only
-// needs the one image file, no separate JSON.
-function extractJsonFromPng(arrayBuffer) {
-  const bytes = new Uint8Array(arrayBuffer);
-  const view = new DataView(arrayBuffer);
-  let offset = 8; // skip the 8-byte PNG signature
-  while (offset < bytes.length - 8) {
-    const len = view.getUint32(offset, false);
-    const type = new TextDecoder().decode(bytes.slice(offset + 4, offset + 8));
-    if (type === 'tEXt') {
-      const text = new TextDecoder().decode(bytes.slice(offset + 8, offset + 8 + len));
-      const nullIdx = text.indexOf('\0');
-      if (text.slice(0, nullIdx) === 'georef') {
-        try { return JSON.parse(text.slice(nullIdx + 1)); } catch (e) { return null; }
-      }
-    }
-    if (type === 'IEND') break;
-    offset += 4 + 4 + len + 4; // length field + type + data + crc
-  }
-  return null;
-}
 function lineLength(points) {
   if (!points || points.length < 2) return 0;
   let total = 0;
@@ -430,7 +417,7 @@ const GestureMapViewport = React.forwardRef(function GestureMapViewport({ childr
       const [p1, p2] = pointerArray();
       const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
       const angle = (Math.atan2(p2.y - p1.y, p2.x - p1.x) * 180) / Math.PI;
-      const newScale = Math.min(5, Math.max(0.5, gestureStart.current.scale * (dist / gestureStart.current.dist)));
+      const newScale = Math.min(40, Math.max(0.5, gestureStart.current.scale * (dist / gestureStart.current.dist)));
       setScale(newScale);
       setRotation(gestureStart.current.rotation + (angle - gestureStart.current.angle));
     } else if (pointers.current.size === 1 && panStart.current && !disablePan) {
@@ -769,62 +756,8 @@ function RefPointForm({ pointIndex, onSubmit, onCancel }) {
   );
 }
 
-// ---------- Import a georeferenced map exported from the main Harder
-// Contracting app's "Share this map" button. True AirDrop "Open With"
-// isn't possible for a home-screen web app on iOS — Apple only lets
-// AirDrop hand files to native apps registered for specific file types.
-// This is the practical alternative: AirDrop the file to the iPad (it
-// lands in Files), then pick it here.
-//
-// Just one file — the georeferencing data (refPoints/geoCorners/etc.) is
-// embedded directly inside the PNG itself as a standard tEXt chunk (see
-// extractJsonFromPng), so there's nothing separate to keep track of or
-// accidentally leave behind during AirDrop.
-function ImportMapForm({ onImport, importing, onCancel }) {
-  const [error, setError] = useState(null);
-
-  const handleFile = async (file) => {
-    setError(null);
-    let geoData;
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      geoData = extractJsonFromPng(arrayBuffer);
-    } catch (e) {
-      setError("Couldn't read that image file — pick it again, or re-share from the main app.");
-      return;
-    }
-    if (!geoData || !geoData.imageWidth || !geoData.imageHeight) {
-      setError("This image doesn't have map data embedded in it — make sure it's shared from the main app's \"Share this map\" button, not a regular photo or a re-saved copy (re-saving through some apps can strip this out).");
-      return;
-    }
-    try {
-      await onImport(geoData, file);
-    } catch (e) {
-      setError("Import failed — " + (e && e.message ? e.message : 'try again.'));
-    }
-  };
-
-  return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 150, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'flex-end' }}>
-      <div className="w-full p-5" style={{ background: COLORS.bg, borderRadius: '16px 16px 0 0', border: `2px solid ${COLORS.line}`, borderBottom: 'none' }}>
-        <h2 className="font-display text-lg font-bold mb-2">Import a shared map</h2>
-        <p className="text-xs mb-3" style={{ color: COLORS.inkDim }}>
-          AirDrop the map image from the main app to this iPad first (Save to Files if prompted), then pick it below. The georeferencing is built into the file — nothing else needed.
-        </p>
-        {error && <p className="text-xs mb-3" style={{ color: '#E07A5F' }}>{error}</p>}
-        <label className="block text-center rounded-lg py-3 mb-3 cursor-pointer font-display font-semibold uppercase tracking-wide text-sm" style={{ background: COLORS.surfaceRaised, border: `2px dashed ${COLORS.line}`, color: COLORS.accent }}>
-          {importing ? 'Importing…' : '📁 Choose the shared map image'}
-          <input type="file" accept="image/png,.png" className="hidden" disabled={importing}
-            onChange={(e) => { const f = e.target.files[0]; e.target.value = ''; if (f) handleFile(f); }} />
-        </label>
-        <Btn variant="ghost" className="w-full" onClick={onCancel}>Cancel</Btn>
-      </div>
-    </div>
-  );
-}
-
 // ---------- Settings panel: manage maps, clear trail, units ----------
-function SettingsPanel({ maps, onAddMap, addingMap, onDeleteMap, onSelectMap, selectedMapId, onCalibrate, trailPaused, onToggleTrailPaused, onClearTrail, unit, onSetUnit, onOpenImport, onClose }) {
+function SettingsPanel({ maps, onAddMap, addingMap, onDeleteMap, onSelectMap, selectedMapId, onCalibrate, trailPaused, onToggleTrailPaused, onClearTrail, unit, onSetUnit, onClose }) {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [confirmClearTrail, setConfirmClearTrail] = useState(false);
   return (
@@ -856,13 +789,10 @@ function SettingsPanel({ maps, onAddMap, addingMap, onDeleteMap, onSelectMap, se
             ))}
           </div>
         )}
-        <label className="block text-center rounded-lg py-3 mb-3 cursor-pointer font-display font-semibold uppercase tracking-wide text-sm" style={{ background: COLORS.surfaceRaised, border: `2px dashed ${COLORS.line}`, color: COLORS.accent }}>
-          {addingMap ? 'Processing…' : '📁 Add map from Files (PDF)'}
+        <label className="block text-center rounded-lg py-3 mb-5 cursor-pointer font-display font-semibold uppercase tracking-wide text-sm" style={{ background: COLORS.surfaceRaised, border: `2px dashed ${COLORS.line}`, color: COLORS.accent }}>
+          {addingMap ? 'Processing…' : '📁 Add map from Files'}
           <input type="file" accept="application/pdf" className="hidden" disabled={addingMap} onChange={(e) => { if (e.target.files[0]) onAddMap(e.target.files[0]); e.target.value = ''; }} />
         </label>
-        <button onClick={onOpenImport} className="block text-center rounded-lg py-3 mb-5 w-full font-display font-semibold uppercase tracking-wide text-sm" style={{ background: COLORS.surfaceRaised, border: `2px dashed ${COLORS.line}`, color: COLORS.accent }}>
-          📤 Import a map shared from the main app
-        </button>
 
         <div className="h-px my-4" style={{ background: COLORS.line }} />
 
@@ -904,8 +834,6 @@ function App() {
   const [maps, setMaps] = useState(() => cacheGet('maps', []));
   const [selectedMapId, setSelectedMapId] = useState(() => cacheGet('selectedMapId', null));
   const [addingMap, setAddingMap] = useState(false);
-  const [importingMap, setImportingMap] = useState(false);
-  const [showImportMap, setShowImportMap] = useState(false);
   const [pins, setPins] = useState(() => cacheGet('pins', []));
   const [lines, setLines] = useState(() => cacheGet('lines', []));
   const [trail, setTrail] = useState(() => cacheGet('trail', []));
@@ -992,35 +920,6 @@ function App() {
       alert("Couldn't load that PDF — " + (e.message || 'try a different file.'));
     }
     setAddingMap(false);
-  };
-  // Imports a map exported from the main Harder Contracting app's "Share
-  // this map" button — the JSON's field names (imageWidth, imageHeight,
-  // refPoints, geoCorners, geoBBoxFraction) are deliberately identical to
-  // this app's own map record shape, so this is close to a direct copy
-  // rather than a real format conversion.
-  const importSharedMap = async (geoData, imageFile) => {
-    setImportingMap(true);
-    try {
-      const id = uid();
-      await idbSetMapImageBlob(id, imageFile);
-      const record = {
-        id,
-        name: geoData.name || imageFile.name.replace(/\.(png|jpe?g)$/i, ''),
-        imageWidth: geoData.imageWidth,
-        imageHeight: geoData.imageHeight,
-        geoCorners: geoData.geoCorners || undefined,
-        geoBBoxFraction: geoData.geoBBoxFraction || undefined,
-        refPoints: geoData.refPoints || [],
-        addedAt: new Date().toISOString(),
-      };
-      const next = [...maps, record];
-      setMaps(next);
-      setSelectedMapId(id);
-      setShowImportMap(false);
-    } catch (e) {
-      alert("Couldn't import that map — " + (e.message || 'try again.'));
-    }
-    setImportingMap(false);
   };
   const deleteMap = async (mapId) => {
     await idbDeleteMapImageBlob(mapId);
@@ -1167,13 +1066,6 @@ function App() {
           }}
         />
       )}
-      {showImportMap && (
-        <ImportMapForm
-          importing={importingMap}
-          onImport={importSharedMap}
-          onCancel={() => setShowImportMap(false)}
-        />
-      )}
       {showSettings && (
         <SettingsPanel
           maps={maps}
@@ -1188,7 +1080,6 @@ function App() {
           onClearTrail={() => setTrail([]) || cacheSet('trail', [])}
           unit={unit}
           onSetUnit={setUnit}
-          onOpenImport={() => { setShowSettings(false); setShowImportMap(true); }}
           onClose={() => setShowSettings(false)}
         />
       )}
