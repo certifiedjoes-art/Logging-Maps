@@ -6,7 +6,7 @@
 // Bump this version string any time index.html (or anything else here)
 // changes and gets re-uploaded — that's what makes the update actually
 // show up instead of the iPad quietly keeping the old cached copy forever.
-const CACHE_NAME = 'harder-field-map-v8';
+const CACHE_NAME = 'harder-field-map-v9';
 const PRECACHE_URLS = [
   './',
   './index.html',

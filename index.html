@@ -846,10 +846,12 @@ function ShareLoginForm({ onSignedIn, onCancel }) {
 }
 
 // ---------- Settings panel: manage maps, clear trail, units ----------
-function SettingsPanel({ maps, onAddMap, addingMap, onDeleteMap, onSelectMap, selectedMapId, onCalibrate, trailPaused, onToggleTrailPaused, onClearTrail, unit, onSetUnit, authUser, onSignOut, onUploadShared, uploadingShared, uploadError, onClose }) {
+function SettingsPanel({ maps, onAddMap, addingMap, onDeleteMap, onRenameMap, onSelectMap, selectedMapId, onCalibrate, trailPaused, onToggleTrailPaused, onClearTrail, unit, onSetUnit, authUser, onSignOut, onUploadShared, uploadingShared, uploadError, onClose }) {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [confirmClearTrail, setConfirmClearTrail] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
+  const [renamingId, setRenamingId] = useState(null);
+  const [renameText, setRenameText] = useState('');
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 140, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'flex-end' }}>
       <div className="w-full p-5" style={{ background: COLORS.bg, borderRadius: '16px 16px 0 0', maxHeight: '85vh', overflowY: 'auto', border: `2px solid ${COLORS.line}`, borderBottom: 'none' }}>
@@ -862,23 +864,36 @@ function SettingsPanel({ maps, onAddMap, addingMap, onDeleteMap, onSelectMap, se
         {maps.length > 0 && (
           <div className="space-y-2 mb-3">
             {maps.map((m) => (
-              <div key={m.id} className="rounded-lg p-3 flex items-center justify-between gap-2" style={{ background: m.id === selectedMapId ? COLORS.surfaceRaised : COLORS.surface, border: `1px solid ${m.id === selectedMapId ? COLORS.accent : COLORS.line}` }}>
-                <button onClick={() => onSelectMap(m.id)} className="text-left flex-1">
-                  <span className="text-sm font-semibold block">{m.name}{m.shared ? ' 🌐' : ''}</span>
-                  <span className="text-xs" style={{ color: COLORS.accent }}>
-                    {m.shared ? 'Shared — synced automatically' : ''}{m.shared && ' · '}
-                    {m.geoCorners ? '🛰️ Georeferenced' : (isMapGeoreferenced(m) ? '🗺️ Georeferenced (manual)' : '⬜ Not calibrated yet')}
-                  </span>
-                </button>
-                {m.shared ? (
-                  <span className="text-xs flex-shrink-0" style={{ color: COLORS.inkDim }}>Remove from the shared library to delete</span>
-                ) : confirmDeleteId === m.id ? (
-                  <div className="flex gap-1 flex-shrink-0">
-                    <button onClick={() => { onDeleteMap(m.id); setConfirmDeleteId(null); }} className="text-xs underline" style={{ color: '#E07A5F' }}>Confirm</button>
-                    <button onClick={() => setConfirmDeleteId(null)} className="text-xs underline" style={{ color: COLORS.inkDim }}>Cancel</button>
+              <div key={m.id} className="rounded-lg p-3" style={{ background: m.id === selectedMapId ? COLORS.surfaceRaised : COLORS.surface, border: `1px solid ${m.id === selectedMapId ? COLORS.accent : COLORS.line}` }}>
+                {renamingId === m.id ? (
+                  <div className="flex gap-2 items-center mb-1">
+                    <TextInput value={renameText} onChange={(e) => setRenameText(e.target.value)} className="flex-1" autoFocus />
+                    <button onClick={() => { if (renameText.trim()) onRenameMap(m.id, renameText.trim()); setRenamingId(null); }} className="text-xs underline flex-shrink-0" style={{ color: COLORS.accent }}>Save</button>
+                    <button onClick={() => setRenamingId(null)} className="text-xs underline flex-shrink-0" style={{ color: COLORS.inkDim }}>Cancel</button>
                   </div>
                 ) : (
-                  <button onClick={() => setConfirmDeleteId(m.id)} className="text-xs underline flex-shrink-0" style={{ color: '#E07A5F' }}>Delete</button>
+                  <div className="flex items-center justify-between gap-2">
+                    <button onClick={() => onSelectMap(m.id)} className="text-left flex-1 min-w-0">
+                      <span className="text-sm font-semibold block truncate">{m.name}{m.shared ? ' 🌐' : ''}</span>
+                      <span className="text-xs" style={{ color: COLORS.accent }}>
+                        {m.shared ? 'Shared — synced automatically' : ''}{m.shared && ' · '}
+                        {m.geoCorners ? '🛰️ Georeferenced' : (isMapGeoreferenced(m) ? '🗺️ Georeferenced (manual)' : '⬜ Not calibrated yet')}
+                      </span>
+                    </button>
+                    <div className="flex gap-2 flex-shrink-0 items-center">
+                      <button onClick={() => { setRenamingId(m.id); setRenameText(m.name); }} className="text-xs underline" style={{ color: COLORS.accent }}>Rename</button>
+                      {m.shared ? (
+                        <span className="text-xs" style={{ color: COLORS.inkDim }}>Delete from shared library to remove</span>
+                      ) : confirmDeleteId === m.id ? (
+                        <React.Fragment>
+                          <button onClick={() => { onDeleteMap(m.id); setConfirmDeleteId(null); }} className="text-xs underline" style={{ color: '#E07A5F' }}>Confirm</button>
+                          <button onClick={() => setConfirmDeleteId(null)} className="text-xs underline" style={{ color: COLORS.inkDim }}>Cancel</button>
+                        </React.Fragment>
+                      ) : (
+                        <button onClick={() => setConfirmDeleteId(m.id)} className="text-xs underline" style={{ color: '#E07A5F' }}>Delete</button>
+                      )}
+                    </div>
+                  </div>
                 )}
               </div>
             ))}
@@ -1125,6 +1140,19 @@ function App() {
     if (selectedMapId === mapId) setSelectedMapId(next[0] ? next[0].id : null);
   };
   const patchMap = (mapId, patch) => setMaps((prev) => prev.map((m) => (m.id === mapId ? { ...m, ...patch } : m)));
+  // Renaming a local map just updates it here. Renaming a shared one writes
+  // to Firebase instead, so the new name reaches every other iPad too, the
+  // same way the map itself did.
+  const renameMap = (mapId, newName) => {
+    const map = maps.find((m) => m.id === mapId);
+    if (map && map.shared) {
+      firebase.database().ref('fieldMapMaps/' + mapId + '/name').set(newName).catch(() => {
+        alert("Couldn't rename — check your signal and try again.");
+      });
+    } else {
+      patchMap(mapId, { name: newName });
+    }
+  };
 
   const mapPins = pins.filter((p) => currentMap && p.mapId === currentMap.id);
   const mapLines = lines.filter((l) => currentMap && l.mapId === currentMap.id);
@@ -1267,6 +1295,7 @@ function App() {
           onAddMap={addMapFromFile}
           addingMap={addingMap}
           onDeleteMap={deleteMap}
+          onRenameMap={renameMap}
           onSelectMap={(id) => { setSelectedMapId(id); setShowSettings(false); }}
           selectedMapId={selectedMapId}
           onCalibrate={() => { exitAllModes(); setCalibratingMap(true); setShowSettings(false); }}
