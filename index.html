@@ -441,7 +441,7 @@ const LINE_TYPES = {
 };
 
 // ---------- Map viewport (pan/zoom/rotate) ----------
-const GestureMapViewport = React.forwardRef(function GestureMapViewport({ children, disablePan, onCenterOnMe }, ref) {
+const GestureMapViewport = React.forwardRef(function GestureMapViewport({ children, disablePan, onCenterOnMe, trailPaused, onToggleTrailPaused }, ref) {
   const [scale, setScale] = useState(1);
   const [rotation, setRotation] = useState(0);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -525,6 +525,18 @@ const GestureMapViewport = React.forwardRef(function GestureMapViewport({ childr
         <button onClick={onCenterOnMe} title="Center on me"
           style={{ position: 'absolute', bottom: 10, right: 10, width: 44, height: 44, borderRadius: '50%', background: 'rgba(255,255,255,0.92)', border: `2px solid #333`, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 5, touchAction: 'none', boxShadow: '0 1px 4px rgba(0,0,0,0.35)', fontSize: 20 }}>
           🎯
+        </button>
+      )}
+      {onToggleTrailPaused && (
+        <button onClick={onToggleTrailPaused} title={trailPaused ? 'Start recording your trail' : 'Stop recording your trail'}
+          style={{
+            position: 'absolute', bottom: 62, right: 10, width: 44, height: 44, borderRadius: '50%',
+            background: trailPaused ? 'rgba(255,255,255,0.92)' : '#4285F4',
+            border: `2px solid ${trailPaused ? '#333' : '#4285F4'}`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 5, touchAction: 'none',
+            boxShadow: '0 1px 4px rgba(0,0,0,0.35)', fontSize: 18,
+          }}>
+          {trailPaused ? '⏸' : '🔴'}
         </button>
       )}
     </div>
@@ -962,7 +974,11 @@ function App() {
   const [pins, setPins] = useState(() => cacheGet('pins', []));
   const [lines, setLines] = useState(() => cacheGet('lines', []));
   const [trail, setTrail] = useState(() => cacheGet('trail', []));
-  const [trailPaused, setTrailPaused] = useState(() => cacheGet('trailPaused', false));
+  // Defaults to true (not recording) so a brand-new install doesn't start
+  // tracking position the moment it's opened — recording is something the
+  // operator turns on, not something that just happens. Once someone
+  // toggles it, their choice is remembered from then on as normal.
+  const [trailPaused, setTrailPaused] = useState(() => cacheGet('trailPaused', true));
   const [unit, setUnit] = useState(() => cacheGet('unit', 'meters'));
   const [myLiveLocation, setMyLiveLocation] = useState(null);
 
@@ -1153,7 +1169,8 @@ function App() {
       {/* Map fills the entire screen — everything else floats on top of it */}
       <div style={{ position: 'absolute', inset: 0 }}>
         <GestureMapViewport ref={viewportRef} disablePan={placingPin || measureMode || pencilMode || calibratingMap}
-          onCenterOnMe={myPosition ? () => viewportRef.current && viewportRef.current.centerOnPoint(myPosition.px, myPosition.py) : null}>
+          onCenterOnMe={myPosition ? () => viewportRef.current && viewportRef.current.centerOnPoint(myPosition.px, myPosition.py) : null}
+          trailPaused={trailPaused} onToggleTrailPaused={() => setTrailPaused((v) => !v)}>
           <MapCanvas
             viewBoxWidth={currentMap ? currentMap.imageWidth : 560}
             viewBoxHeight={currentMap ? currentMap.imageHeight : 400}
