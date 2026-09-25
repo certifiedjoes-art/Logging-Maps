@@ -6,7 +6,7 @@
 // Bump this version string any time index.html (or anything else here)
 // changes and gets re-uploaded — that's what makes the update actually
 // show up instead of the iPad quietly keeping the old cached copy forever.
-const CACHE_NAME = 'harder-field-map-v4';
+const CACHE_NAME = 'harder-field-map-v6';
 const PRECACHE_URLS = [
   './',
   './index.html',
@@ -17,6 +17,15 @@ const PRECACHE_URLS = [
   'https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.6/babel.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.mjs',
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs',
+  // Firebase — only needed for the shared-map sync/upload feature. Not
+  // strictly required for the app to keep working offline (the app avoids
+  // calling any Firebase function when there's no signal), but caching them
+  // means the app still boots cleanly with zero signal instead of showing
+  // a load error for a missing script.
+  'https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js',
+  'https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js',
+  'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js',
+  'https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js',
 ];
 
 self.addEventListener('install', (event) => {

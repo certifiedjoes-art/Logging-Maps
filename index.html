@@ -7,10 +7,35 @@
 
 <!-- Registers the service worker as the very first thing this page does,
      so it has the best chance of being ready to serve everything from
-     cache on a cold, signal-less launch. -->
+     cache on a cold, signal-less launch.
+
+     Also makes updates take effect automatically, with no manual
+     close-and-reopen: `updateViaCache: 'none'` stops the browser's own
+     HTTP cache from hiding a freshly-uploaded sw.js; calling
+     registration.update() whenever the app opens or comes back to the
+     foreground checks for that new file right away instead of waiting on
+     the browser's own schedule; and reloading once when a new service
+     worker actually takes control (`controllerchange`) is what makes the
+     new version show up immediately instead of only on the NEXT launch.
+     This all still only works while there's signal — with zero signal
+     there's nothing new to check for, and the last-loaded version keeps
+     running exactly as it does today. -->
 <script>
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    let reloadedForUpdate = false;
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      if (reloadedForUpdate) return; // guards against a reload loop
+      reloadedForUpdate = true;
+      window.location.reload();
+    });
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+      .then(function (registration) {
+        registration.update().catch(function () {});
+        document.addEventListener('visibilitychange', function () {
+          if (document.visibilityState === 'visible') registration.update().catch(function () {});
+        });
+      })
+      .catch(function () {});
   }
 </script>
 
@@ -36,6 +61,31 @@
 <script crossorigin src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js" onload="window.__loadStatus['react']='ok'" onerror="window.__loadStatus['react']='FAILED'"></script>
 <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js" onload="window.__loadStatus['react-dom']='ok'" onerror="window.__loadStatus['react-dom']='FAILED'"></script>
 <script crossorigin src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.6/babel.min.js" onload="window.__loadStatus['babel']='ok'" onerror="window.__loadStatus['babel']='FAILED'"></script>
+
+<!-- Firebase — used only for the shared map library (see "fieldMapMaps" and
+     "fieldMapImages" below). Reads are open so an iPad with zero login can
+     pull maps down; writes require signing in with the same name+PIN used
+     on the Harder Contracting app, so only someone with a real account can
+     add or change what's shared. This is the SAME Firebase project as that
+     app, but every path this file touches (fieldMapMaps, fieldMapImages)
+     is separate from what that app uses, so nothing there is affected. -->
+<script crossorigin src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js" onload="window.__loadStatus['firebase-app']='ok'" onerror="window.__loadStatus['firebase-app']='FAILED'"></script>
+<script crossorigin src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js" onload="window.__loadStatus['firebase-db']='ok'" onerror="window.__loadStatus['firebase-db']='FAILED'"></script>
+<script crossorigin src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js" onload="window.__loadStatus['firebase-auth']='ok'" onerror="window.__loadStatus['firebase-auth']='FAILED'"></script>
+<script crossorigin src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js" onload="window.__loadStatus['firebase-storage']='ok'" onerror="window.__loadStatus['firebase-storage']='FAILED'"></script>
+<script>
+  const firebaseConfig = {
+    apiKey: "AIzaSyAcKWZYgawRHLBIqbUWPPYHmP812_4gODI",
+    authDomain: "harder-contracting.firebaseapp.com",
+    databaseURL: "https://harder-contracting-default-rtdb.firebaseio.com",
+    projectId: "harder-contracting",
+    storageBucket: "harder-contracting.firebasestorage.app",
+    messagingSenderId: "337605513419",
+    appId: "1:337605513419:web:f599c3a5fa57f005ed4b4e"
+  };
+  firebase.initializeApp(firebaseConfig);
+  firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(() => {});
+</script>
 
 <!-- PDF.js — renders an uploaded GeoPDF's first page to a canvas, client-side. -->
 <script type="module">
@@ -86,7 +136,7 @@
     if (root.dataset.errorShown) return;
     root.dataset.errorShown = '1';
     const status = window.__loadStatus || {};
-    const lines = ['tailwind', 'react', 'react-dom', 'babel', 'pdfjs'].map(function (k) {
+    const lines = ['tailwind', 'react', 'react-dom', 'babel', 'pdfjs', 'firebase-app', 'firebase-db', 'firebase-auth', 'firebase-storage'].map(function (k) {
       return k + ': ' + (status[k] || 'never finished loading');
     });
     root.innerHTML =
@@ -150,6 +200,12 @@ function uid() { return Date.now().toString(36) + Math.random().toString(36).sli
 function fmtWhen(iso) {
   try { return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
   catch (e) { return ''; }
+}
+// Same name → login-email scheme the Harder Contracting app uses, so
+// signing in here with your name + PIN is the exact same account.
+function emailForMechanic(name) {
+  const slug = name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return `${slug}@harder-contracting.app`;
 }
 
 // ---------- Map image storage (IndexedDB) ----------
@@ -756,10 +812,44 @@ function RefPointForm({ pointIndex, onSubmit, onCancel }) {
   );
 }
 
+// Small sign-in form for the "Upload & Share" action — same name + PIN as
+// the Harder Contracting app, since it's the same account either way.
+function ShareLoginForm({ onSignedIn, onCancel }) {
+  const [name, setName] = useState('');
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const trySignIn = async () => {
+    if (!name.trim() || !pin.trim()) return;
+    setBusy(true);
+    setError('');
+    try {
+      await firebase.auth().signInWithEmailAndPassword(emailForMechanic(name), pin);
+      onSignedIn();
+    } catch (e) {
+      setError("Couldn't sign in — check your name and PIN and try again.");
+    }
+    setBusy(false);
+  };
+  return (
+    <div className="rounded-lg p-3 mb-4" style={{ background: COLORS.surfaceRaised, border: `1px solid ${COLORS.line}` }}>
+      <p className="text-xs mb-2" style={{ color: COLORS.inkDim }}>Sign in with your Harder Contracting name and PIN to upload and share a map.</p>
+      <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (e.g. Joe)" className="w-full mb-2" autoCapitalize="words" />
+      <TextInput value={pin} onChange={(e) => setPin(e.target.value)} placeholder="PIN" className="w-full mb-2" inputMode="numeric" type="password" />
+      {error && <p className="text-xs mb-2" style={{ color: '#E07A5F' }}>{error}</p>}
+      <div className="flex gap-2">
+        <Btn onClick={trySignIn} disabled={busy || !name.trim() || !pin.trim()}>{busy ? 'Signing in…' : 'Sign in'}</Btn>
+        <Btn variant="ghost" onClick={onCancel}>Cancel</Btn>
+      </div>
+    </div>
+  );
+}
+
 // ---------- Settings panel: manage maps, clear trail, units ----------
-function SettingsPanel({ maps, onAddMap, addingMap, onDeleteMap, onSelectMap, selectedMapId, onCalibrate, trailPaused, onToggleTrailPaused, onClearTrail, unit, onSetUnit, onClose }) {
+function SettingsPanel({ maps, onAddMap, addingMap, onDeleteMap, onSelectMap, selectedMapId, onCalibrate, trailPaused, onToggleTrailPaused, onClearTrail, unit, onSetUnit, authUser, onSignOut, onUploadShared, uploadingShared, uploadError, onClose }) {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [confirmClearTrail, setConfirmClearTrail] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 140, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'flex-end' }}>
       <div className="w-full p-5" style={{ background: COLORS.bg, borderRadius: '16px 16px 0 0', maxHeight: '85vh', overflowY: 'auto', border: `2px solid ${COLORS.line}`, borderBottom: 'none' }}>
@@ -774,10 +864,15 @@ function SettingsPanel({ maps, onAddMap, addingMap, onDeleteMap, onSelectMap, se
             {maps.map((m) => (
               <div key={m.id} className="rounded-lg p-3 flex items-center justify-between gap-2" style={{ background: m.id === selectedMapId ? COLORS.surfaceRaised : COLORS.surface, border: `1px solid ${m.id === selectedMapId ? COLORS.accent : COLORS.line}` }}>
                 <button onClick={() => onSelectMap(m.id)} className="text-left flex-1">
-                  <span className="text-sm font-semibold block">{m.name}</span>
-                  <span className="text-xs" style={{ color: COLORS.accent }}>{m.geoCorners ? '🛰️ Georeferenced' : (isMapGeoreferenced(m) ? '🗺️ Georeferenced (manual)' : '⬜ Not calibrated yet')}</span>
+                  <span className="text-sm font-semibold block">{m.name}{m.shared ? ' 🌐' : ''}</span>
+                  <span className="text-xs" style={{ color: COLORS.accent }}>
+                    {m.shared ? 'Shared — synced automatically' : ''}{m.shared && ' · '}
+                    {m.geoCorners ? '🛰️ Georeferenced' : (isMapGeoreferenced(m) ? '🗺️ Georeferenced (manual)' : '⬜ Not calibrated yet')}
+                  </span>
                 </button>
-                {confirmDeleteId === m.id ? (
+                {m.shared ? (
+                  <span className="text-xs flex-shrink-0" style={{ color: COLORS.inkDim }}>Remove from the shared library to delete</span>
+                ) : confirmDeleteId === m.id ? (
                   <div className="flex gap-1 flex-shrink-0">
                     <button onClick={() => { onDeleteMap(m.id); setConfirmDeleteId(null); }} className="text-xs underline" style={{ color: '#E07A5F' }}>Confirm</button>
                     <button onClick={() => setConfirmDeleteId(null)} className="text-xs underline" style={{ color: COLORS.inkDim }}>Cancel</button>
@@ -789,10 +884,30 @@ function SettingsPanel({ maps, onAddMap, addingMap, onDeleteMap, onSelectMap, se
             ))}
           </div>
         )}
-        <label className="block text-center rounded-lg py-3 mb-5 cursor-pointer font-display font-semibold uppercase tracking-wide text-sm" style={{ background: COLORS.surfaceRaised, border: `2px dashed ${COLORS.line}`, color: COLORS.accent }}>
-          {addingMap ? 'Processing…' : '📁 Add map from Files'}
+        <label className="block text-center rounded-lg py-3 mb-3 cursor-pointer font-display font-semibold uppercase tracking-wide text-sm" style={{ background: COLORS.surfaceRaised, border: `2px dashed ${COLORS.line}`, color: COLORS.accent }}>
+          {addingMap ? 'Processing…' : '📁 Add map from Files (this device only)'}
           <input type="file" accept="application/pdf" className="hidden" disabled={addingMap} onChange={(e) => { if (e.target.files[0]) onAddMap(e.target.files[0]); e.target.value = ''; }} />
         </label>
+
+        <div className="h-px my-4" style={{ background: COLORS.line }} />
+
+        <h3 className="font-display text-sm font-bold mb-1">🌐 Upload & Share</h3>
+        <p className="text-xs mb-3" style={{ color: COLORS.inkDim }}>Uploads here reach every iPad automatically once they have internet.</p>
+        {authUser ? (
+          <React.Fragment>
+            <p className="text-xs mb-2" style={{ color: COLORS.accent }}>Signed in as {authUser}</p>
+            <label className="block text-center rounded-lg py-3 mb-2 cursor-pointer font-display font-semibold uppercase tracking-wide text-sm" style={{ background: uploadingShared ? COLORS.surfaceRaised : COLORS.accent, border: `2px dashed ${COLORS.line}`, color: uploadingShared ? COLORS.accent : COLORS.ink2 }}>
+              {uploadingShared ? 'Uploading…' : '📤 Upload & Share a map'}
+              <input type="file" accept="application/pdf" className="hidden" disabled={uploadingShared} onChange={(e) => { if (e.target.files[0]) onUploadShared(e.target.files[0]); e.target.value = ''; }} />
+            </label>
+            {uploadError && <p className="text-xs mb-2" style={{ color: '#E07A5F' }}>{uploadError}</p>}
+            <button onClick={onSignOut} className="text-xs underline mb-4 block" style={{ color: COLORS.inkDim }}>Sign out</button>
+          </React.Fragment>
+        ) : showLogin ? (
+          <ShareLoginForm onSignedIn={() => setShowLogin(false)} onCancel={() => setShowLogin(false)} />
+        ) : (
+          <Btn variant="ghost" className="w-full mb-4" onClick={() => setShowLogin(true)}>Sign in to upload & share</Btn>
+        )}
 
         <div className="h-px my-4" style={{ background: COLORS.line }} />
 
@@ -853,6 +968,9 @@ function App() {
   const [calibrationPointIndex, setCalibrationPointIndex] = useState(0);
   const [pendingCalibrationPixel, setPendingCalibrationPixel] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [authUser, setAuthUser] = useState(null); // display name once signed in, else null
+  const [uploadingShared, setUploadingShared] = useState(false);
+  const [uploadError, setUploadError] = useState('');
 
   const viewportRef = useRef(null);
 
@@ -892,6 +1010,83 @@ function App() {
     );
     return () => navigator.geolocation.clearWatch(watchId);
   }, [trailPaused]);
+
+  // Tracks who's signed in, purely to show a name and to gate the upload
+  // button — the real enforcement is the Firebase write rule, not this.
+  useEffect(() => {
+    const unsub = firebase.auth().onAuthStateChanged((u) => {
+      setAuthUser(u && u.email ? u.email.split('@')[0].replace(/-/g, ' ') : null);
+    });
+    return unsub;
+  }, []);
+
+  // Shared map library — listens continuously, so the moment this iPad has
+  // signal and a map is added or changed anywhere, it downloads and caches
+  // it automatically, no action needed. Only pulls in maps that are new or
+  // whose image actually changed since last time, so it doesn't re-download
+  // on every reconnect.
+  useEffect(() => {
+    const ref = firebase.database().ref('fieldMapMaps');
+    const handler = ref.on('value', (snap) => {
+      const val = snap.val() || {};
+      const entries = Object.values(val);
+      (async () => {
+        for (const entry of entries) {
+          const cacheKey = 'sharedver:' + entry.id;
+          const knownVersion = cacheGet(cacheKey, null);
+          if (knownVersion === entry.imageUrl) continue; // already have this exact image cached
+          try {
+            const resp = await fetch(entry.imageUrl);
+            const blob = await resp.blob();
+            await idbSetMapImageBlob(entry.id, blob);
+            cacheSet(cacheKey, entry.imageUrl);
+          } catch (e) {
+            continue; // no signal right now, or a blocked fetch — try again next time this fires
+          }
+        }
+        setMaps((prev) => {
+          const localOnes = prev.filter((m) => !m.shared);
+          const sharedOnes = entries.map((entry) => ({
+            id: entry.id, name: entry.name, shared: true,
+            imageWidth: entry.imageWidth, imageHeight: entry.imageHeight,
+            geoCorners: entry.geoCorners, geoBBoxFraction: entry.geoBBoxFraction,
+            refPoints: [], addedAt: entry.addedAt,
+          }));
+          return [...localOnes, ...sharedOnes];
+        });
+      })();
+    });
+    return () => ref.off('value', handler);
+  }, []);
+
+  const signOutShared = () => firebase.auth().signOut().catch(() => {});
+  const uploadSharedMap = async (file) => {
+    setUploadingShared(true);
+    setUploadError('');
+    try {
+      const { blob, width, height, geoData } = await renderPdfFirstPageToBlob(file);
+      const id = uid();
+      const storageRef = firebase.storage().ref(`fieldMapImages/${id}-${Date.now()}.png`);
+      await storageRef.put(blob);
+      const imageUrl = await storageRef.getDownloadURL();
+      const entry = {
+        id, name: file.name.replace(/\.pdf$/i, ''), imageUrl,
+        imageWidth: width, imageHeight: height,
+        geoCorners: geoData ? geoData.corners : null,
+        geoBBoxFraction: geoData ? geoData.bboxFraction : null,
+        addedAt: new Date().toISOString(), addedBy: authUser || 'unknown',
+      };
+      await firebase.database().ref('fieldMapMaps/' + id).set(entry);
+      // Also cache it immediately on this device, so whoever just uploaded
+      // it can see and use it right away without waiting on their own
+      // listener round-trip.
+      await idbSetMapImageBlob(id, blob);
+      cacheSet('sharedver:' + id, imageUrl);
+    } catch (e) {
+      setUploadError("Couldn't upload — " + (e.message || 'check your signal and try again.'));
+    }
+    setUploadingShared(false);
+  };
 
   useEffect(() => { cacheSet('maps', maps); }, [maps]);
   useEffect(() => { cacheSet('selectedMapId', selectedMapId); }, [selectedMapId]);
@@ -1080,6 +1275,11 @@ function App() {
           onClearTrail={() => setTrail([]) || cacheSet('trail', [])}
           unit={unit}
           onSetUnit={setUnit}
+          authUser={authUser}
+          onSignOut={signOutShared}
+          onUploadShared={uploadSharedMap}
+          uploadingShared={uploadingShared}
+          uploadError={uploadError}
           onClose={() => setShowSettings(false)}
         />
       )}
