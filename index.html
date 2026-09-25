@@ -12,14 +12,16 @@
      Also makes updates take effect automatically, with no manual
      close-and-reopen: `updateViaCache: 'none'` stops the browser's own
      HTTP cache from hiding a freshly-uploaded sw.js; calling
-     registration.update() whenever the app opens or comes back to the
-     foreground checks for that new file right away instead of waiting on
-     the browser's own schedule; and reloading once when a new service
-     worker actually takes control (`controllerchange`) is what makes the
-     new version show up immediately instead of only on the NEXT launch.
-     This all still only works while there's signal — with zero signal
-     there's nothing new to check for, and the last-loaded version keeps
-     running exactly as it does today. -->
+     registration.update() whenever the app opens, comes back to the
+     foreground, or every 15 minutes while it just sits open the whole
+     time (an iPad mounted in a machine may never be backgrounded or
+     closed for hours), checks for a new file instead of waiting on the
+     browser's own schedule; and reloading once when a new service worker
+     actually takes control (`controllerchange`) is what makes the new
+     version show up right away instead of only on the next launch. This
+     all still only works while there's signal — with zero signal there's
+     nothing new to check for, and the last-loaded version keeps running
+     exactly as it does today. -->
 <script>
   if ('serviceWorker' in navigator) {
     let reloadedForUpdate = false;
@@ -34,6 +36,7 @@
         document.addEventListener('visibilitychange', function () {
           if (document.visibilityState === 'visible') registration.update().catch(function () {});
         });
+        setInterval(function () { registration.update().catch(function () {}); }, 15 * 60 * 1000);
       })
       .catch(function () {});
   }
