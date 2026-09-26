@@ -512,14 +512,34 @@ const GestureMapViewport = React.forwardRef(function GestureMapViewport({ childr
       if (!container) return;
       const svg = container.querySelector('svg');
       if (!svg) return;
-      const ctm = svg.getScreenCTM();
-      if (!ctm) return;
-      const pt = svg.createSVGPoint();
-      pt.x = px; pt.y = py;
-      const screenPt = pt.matrixTransform(ctm);
       const rect = container.getBoundingClientRect();
-      const targetX = rect.left + rect.width / 2, targetY = rect.top + rect.height / 2;
-      setPan((prev) => ({ x: prev.x + (targetX - screenPt.x), y: prev.y + (targetY - screenPt.y) }));
+      const vb = svg.viewBox.baseVal;
+      const vbWidth = vb && vb.width ? vb.width : rect.width;
+      const vbHeight = vb && vb.height ? vb.height : rect.height;
+      const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+      const fit = Math.min(rect.width / vbWidth, rect.height / vbHeight);
+      const renderedW = vbWidth * fit, renderedH = vbHeight * fit;
+      const offsetX = rect.left + (rect.width - renderedW) / 2;
+      const offsetY = rect.top + (rect.height - renderedH) / 2;
+      // Where (px, py) sits in the map's own untransformed layout box...
+      const layoutX = offsetX + px * fit, layoutY = offsetY + py * fit;
+      // ...then where that lands on screen once the current pan/rotate/scale
+      // is applied. Computed by hand (not via svg.getScreenCTM()) because
+      // that API doesn't reliably account for a CSS transform on an
+      // ancestor element on every browser — notably iPadOS Safari, where it
+      // was throwing this off by more and more the further you'd zoomed,
+      // rotated, or panned.
+      const rad = (rotation * Math.PI) / 180;
+      const cos = Math.cos(rad), sin = Math.sin(rad);
+      const dx = layoutX - cx, dy = layoutY - cy;
+      const rx = (dx * cos - dy * sin) * scale;
+      const ry = (dx * sin + dy * cos) * scale;
+      setPan({ x: -rx, y: -ry });
+    },
+    getMapTransform: () => {
+      const container = containerRef.current;
+      if (!container) return null;
+      return { scale, rotation, pan, rect: container.getBoundingClientRect() };
     },
   }));
 
@@ -556,7 +576,7 @@ const GestureMapViewport = React.forwardRef(function GestureMapViewport({ childr
 });
 
 // ---------- Map surface ----------
-function MapCanvas({ viewBoxWidth, viewBoxHeight, backgroundImageUrl, pinsToShow, linesToShow, placingPin, measureMode, pencilMode, drawingPoints, calibrating, refPoints, trail, myPosition, onMapTap, onFreehandPoint, onFreehandEnd, onPinTap, onLineTap }) {
+function MapCanvas({ viewportRef, viewBoxWidth, viewBoxHeight, backgroundImageUrl, pinsToShow, linesToShow, placingPin, measureMode, pencilMode, drawingPoints, calibrating, refPoints, trail, myPosition, onMapTap, onFreehandPoint, onFreehandEnd, onPinTap, onLineTap }) {
   const svgRef = useRef(null);
   const isDrawingStroke = useRef(false);
   const tapMode = placingPin || measureMode || calibrating;
@@ -565,14 +585,31 @@ function MapCanvas({ viewBoxWidth, viewBoxHeight, backgroundImageUrl, pinsToShow
   const vbHeight = viewBoxHeight || 400;
 
   const toLocal = (clientX, clientY) => {
-    const svg = svgRef.current;
-    if (!svg) return null;
-    const screenCTM = svg.getScreenCTM();
-    if (!screenCTM) return null;
-    const pt = svg.createSVGPoint();
-    pt.x = clientX; pt.y = clientY;
-    const local = pt.matrixTransform(screenCTM.inverse());
-    return { x: Math.round(local.x), y: Math.round(local.y) };
+    const info = viewportRef && viewportRef.current && viewportRef.current.getMapTransform && viewportRef.current.getMapTransform();
+    if (!info || !info.rect) return null;
+    const { scale, rotation, pan, rect } = info;
+    const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+    // Undo the CSS pan → rotate → scale applied to the map's transform div
+    // to recover where this tap lands in the div's own (untransformed)
+    // layout. Deliberately not using svg.getScreenCTM() here — it doesn't
+    // reliably account for a CSS transform on an ancestor element on every
+    // browser (notably iPadOS Safari), which is what made taps land further
+    // and further off the more you'd zoomed, rotated, or panned.
+    const dx = clientX - pan.x - cx, dy = clientY - pan.y - cy;
+    const rad = (rotation * Math.PI) / 180;
+    const cos = Math.cos(rad), sin = Math.sin(rad);
+    const ux = dx * cos + dy * sin;
+    const uy = -dx * sin + dy * cos;
+    const layoutX = cx + ux / scale, layoutY = cy + uy / scale;
+
+    // Then map that untransformed-layout point into the SVG's own viewBox
+    // space, accounting for the letterboxing preserveAspectRatio="xMidYMid
+    // meet" adds when the map image's aspect ratio doesn't match the screen's.
+    const fit = Math.min(rect.width / vbWidth, rect.height / vbHeight);
+    const renderedW = vbWidth * fit, renderedH = vbHeight * fit;
+    const offsetX = rect.left + (rect.width - renderedW) / 2;
+    const offsetY = rect.top + (rect.height - renderedH) / 2;
+    return { x: Math.round((layoutX - offsetX) / fit), y: Math.round((layoutY - offsetY) / fit) };
   };
   const handleClick = (e) => {
     if (!tapMode) return;
@@ -1184,6 +1221,7 @@ function App() {
           onCenterOnMe={myPosition ? () => viewportRef.current && viewportRef.current.centerOnPoint(myPosition.px, myPosition.py) : null}
           trailPaused={trailPaused} onToggleTrailPaused={() => setTrailPaused((v) => !v)}>
           <MapCanvas
+            viewportRef={viewportRef}
             viewBoxWidth={currentMap ? currentMap.imageWidth : 560}
             viewBoxHeight={currentMap ? currentMap.imageHeight : 400}
             backgroundImageUrl={currentMapImageSrc}
