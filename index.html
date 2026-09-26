@@ -455,8 +455,17 @@ const GestureMapViewport = React.forwardRef(function GestureMapViewport({ childr
 
   const pointerArray = () => Array.from(pointers.current.values());
   const handlePointerDown = (e) => {
-    e.currentTarget.setPointerCapture(e.pointerId);
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.current.size === 1 && disablePan) {
+      // A draw/measure/pencil/calibrate tool is active for this single
+      // finger — leave the pointer alone so the map surface underneath
+      // (MapCanvas) gets its own untouched tap/click and pointer events.
+      // Grabbing capture here would redirect all of this pointer's future
+      // events to this outer container instead, and nothing would ever
+      // get drawn or measured.
+      return;
+    }
+    e.currentTarget.setPointerCapture(e.pointerId);
     if (pointers.current.size === 2) {
       const [p1, p2] = pointerArray();
       const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
@@ -522,7 +531,7 @@ const GestureMapViewport = React.forwardRef(function GestureMapViewport({ childr
       </div>
       <button onClick={resetView} title="Tap to reset to north-up"
         style={{ position: 'absolute', top: 10, right: 10, width: 44, height: 44, borderRadius: '50%', background: 'rgba(255,255,255,0.92)', border: `2px solid ${isAdjusted ? COLORS.accent : '#333'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 5, touchAction: 'none', boxShadow: '0 1px 4px rgba(0,0,0,0.35)' }}>
-        <div style={{ transform: `rotate(${-rotation}deg)`, fontWeight: 'bold', fontSize: 14, color: COLORS.accent, lineHeight: 1 }}>N</div>
+        <div style={{ transform: `rotate(${rotation}deg)`, fontWeight: 'bold', fontSize: 14, color: COLORS.accent, lineHeight: 1 }}>N</div>
       </button>
       {onCenterOnMe && (
         <button onClick={onCenterOnMe} title="Center on me"
