@@ -560,15 +560,25 @@ const GestureMapViewport = React.forwardRef(function GestureMapViewport({ childr
         </button>
       )}
       {onToggleTrailPaused && (
+        // A plain record/stop button, like a camera or voice-memo app: a
+        // red dot on a light button means "tap to start recording", and
+        // once recording, the button itself turns solid red with a white
+        // square meaning "tap to stop" — no pause icon, since that was
+        // backwards (showing ⏸ while NOT recording read as "recording is
+        // active, tap to pause it", the opposite of what was true).
         <button onClick={onToggleTrailPaused} title={trailPaused ? 'Start recording your trail' : 'Stop recording your trail'}
           style={{
             position: 'absolute', bottom: 62, right: 10, width: 44, height: 44, borderRadius: '50%',
-            background: trailPaused ? 'rgba(255,255,255,0.92)' : '#4285F4',
-            border: `2px solid ${trailPaused ? '#333' : '#4285F4'}`,
+            background: trailPaused ? 'rgba(255,255,255,0.92)' : '#C0392B',
+            border: `2px solid #C0392B`,
             display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 5, touchAction: 'none',
-            boxShadow: '0 1px 4px rgba(0,0,0,0.35)', fontSize: 18,
+            boxShadow: '0 1px 4px rgba(0,0,0,0.35)',
           }}>
-          {trailPaused ? '⏸' : '🔴'}
+          {trailPaused ? (
+            <div style={{ width: 16, height: 16, borderRadius: '50%', background: '#C0392B' }} />
+          ) : (
+            <div style={{ width: 14, height: 14, borderRadius: 3, background: '#fff' }} />
+          )}
         </button>
       )}
     </div>
@@ -992,7 +1002,7 @@ function SettingsPanel({ maps, onDeleteMap, onRenameMap, onSelectMap, selectedMa
 
         <h3 className="font-display text-sm font-bold mb-2">Your trail</h3>
         <div className="flex gap-2 mb-2">
-          <Btn variant="ghost" onClick={onToggleTrailPaused}>{trailPaused ? '▶ Resume recording' : '⏸ Pause recording'}</Btn>
+          <Btn variant="ghost" onClick={onToggleTrailPaused}>{trailPaused ? '● Start recording' : '■ Stop recording'}</Btn>
         </div>
         {confirmClearTrail ? (
           <div className="rounded-lg p-3 mb-4" style={{ background: COLORS.surfaceRaised }}>
