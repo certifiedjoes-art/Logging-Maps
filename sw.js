@@ -6,7 +6,7 @@
 // Bump this version string any time index.html (or anything else here)
 // changes and gets re-uploaded — that's what makes the update actually
 // show up instead of the iPad quietly keeping the old cached copy forever.
-const CACHE_NAME = 'harder-field-map-v16';
+const CACHE_NAME = 'harder-field-map-v17';
 const PRECACHE_URLS = [
   './',
   './index.html',
@@ -66,8 +66,16 @@ self.addEventListener('fetch', (event) => {
           if (resp && resp.ok) {
             const copy = resp.clone();
             caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+            return resp;
           }
-          return resp;
+          // The server answered, but not with a good page — could be
+          // GitHub Pages itself having an outage and serving its own error
+          // page instead of this one. That's not "offline" so the .catch()
+          // below never fires, but it's just as useless to show, so treat
+          // it the same way: fall back to the last known-good saved copy
+          // if there is one, and only show this bad response if there's
+          // truly nothing cached yet (e.g. this device's very first load).
+          return caches.match(event.request).then((cached) => cached || resp);
         })
         .catch(() => caches.match(event.request))
     );
