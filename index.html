@@ -335,7 +335,14 @@ function pixelToLatLng(map, px, py) {
     const fx = px / map.imageWidth;
     const fy = py / map.imageHeight;
     const u = (fx - bf.left) / (bf.right - bf.left);
-    const v = 1 - (fy - bf.top) / (bf.bottom - bf.top);
+    // v tracks fy directly (top of image = v 0, bottom = v 1) — verified
+    // against a real mill export: its LPTS corners already run top-to-
+    // bottom the same way the rendered image does (v 0 sits at the higher-
+    // latitude/north corners, v 1 at the lower-latitude/south corners), so
+    // no extra flip belongs here. Flipping it (as this used to do) mirrors
+    // the whole map north/south — GPS positions would end up on the wrong
+    // side, opposite the way you're actually moving.
+    const v = (fy - bf.top) / (bf.bottom - bf.top);
     const result = bilinearGeoInterp(map.geoCorners, u, v);
     if (result) return result;
   }
@@ -371,7 +378,7 @@ function latLngToPixel(map, lat, lng) {
       u += du; v += dv;
     }
     const fx = bf.left + u * (bf.right - bf.left);
-    const fy = bf.top + (1 - v) * (bf.bottom - bf.top);
+    const fy = bf.top + v * (bf.bottom - bf.top); // mirrors the fix in pixelToLatLng above
     return { px: fx * map.imageWidth, py: fy * map.imageHeight };
   }
   const pts = map && map.refPoints;
