@@ -1086,7 +1086,16 @@ function App() {
   useEffect(() => {
     if (!navigator.geolocation) return;
     const watchId = navigator.geolocation.watchPosition(
-      (pos) => setMyLiveLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      (pos) => {
+        // The very first fix after the GPS radio wakes up is often a rough,
+        // low-accuracy guess (cell-tower/network based) that can be way off
+        // — sometimes way outside the block entirely — before the GPS
+        // itself locks on a few seconds later. Ignoring anything coarser
+        // than 50m keeps that one bad guess from ever showing up as the
+        // blue dot.
+        if (pos.coords.accuracy != null && pos.coords.accuracy > 50) return;
+        setMyLiveLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+      },
       () => {},
       { enableHighAccuracy: true, maximumAge: 0 }
     );
@@ -1100,6 +1109,12 @@ function App() {
     if (!navigator.geolocation) return;
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
+        // Same reasoning as the blue dot above — but here it matters even
+        // more, since one bad point doesn't just misplace a dot, it draws a
+        // long straight line to and from it that's stuck in the trail
+        // permanently. Reject anything coarser than 50m before it ever
+        // gets added.
+        if (pos.coords.accuracy != null && pos.coords.accuracy > 50) return;
         const point = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         setTrail((prev) => {
           const last = prev[prev.length - 1];
