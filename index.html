@@ -413,6 +413,15 @@ function realLineLength(map, points, unit) {
   }
   return unit === 'feet' ? totalMeters * 3.28084 : totalMeters;
 }
+// A recorded track's own points are already real lat/lng (that's the whole
+// point of GPS tracking), so unlike realLineLength above this needs no map
+// or georeferencing to work — it adds up straight from the GPS points.
+function trackDistance(points, unit) {
+  if (!points || points.length < 2) return 0;
+  let totalMeters = 0;
+  for (let i = 1; i < points.length; i++) totalMeters += haversineMeters(points[i - 1].lat, points[i - 1].lng, points[i].lat, points[i].lng);
+  return unit === 'feet' ? totalMeters * 3.28084 : totalMeters;
+}
 
 async function renderPdfFirstPageToBlob(file) {
   if (!window.pdfjsLib) throw new Error('PDF renderer not loaded — check your connection and try again.');
@@ -605,7 +614,7 @@ const GestureMapViewport = React.forwardRef(function GestureMapViewport({ childr
 });
 
 // ---------- Map surface ----------
-function MapCanvas({ viewportRef, viewBoxWidth, viewBoxHeight, backgroundImageUrl, pinsToShow, linesToShow, placingPin, measureMode, pencilMode, drawingPoints, calibrating, refPoints, trail, myPosition, onMapTap, onFreehandPoint, onFreehandEnd, onPinTap, onLineTap }) {
+function MapCanvas({ viewportRef, viewBoxWidth, viewBoxHeight, backgroundImageUrl, pinsToShow, linesToShow, placingPin, measureMode, pencilMode, drawingPoints, calibrating, refPoints, tracksToShow, myPosition, onMapTap, onFreehandPoint, onFreehandEnd, onPinTap, onLineTap, onTrackTap }) {
   const svgRef = useRef(null);
   const isDrawingStroke = useRef(false);
   const tapMode = placingPin || measureMode || calibrating;
@@ -677,9 +686,18 @@ function MapCanvas({ viewportRef, viewBoxWidth, viewBoxHeight, backgroundImageUr
         </React.Fragment>
       )}
 
-      {trail && trail.length > 1 && (
-        <polyline points={trail.map((p) => `${p.x},${p.y}`).join(' ')} fill="none" stroke="#4285F4" strokeWidth="3" strokeOpacity="0.85" strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: 'none' }} />
-      )}
+      {(tracksToShow || []).map((track) => {
+        if (!track.pixels || track.pixels.length < 2) return null;
+        const pointsAttr = track.pixels.map((p) => `${p.x},${p.y}`).join(' ');
+        return (
+          <g key={track.id}>
+            <polyline points={pointsAttr} fill="none" stroke="transparent" strokeWidth="19"
+              style={{ pointerEvents: anyDrawMode ? 'none' : 'stroke', cursor: 'pointer' }}
+              onClick={(e) => { e.stopPropagation(); if (!anyDrawMode) onTrackTap(track.id); }} />
+            <polyline points={pointsAttr} fill="none" stroke={track.color} strokeWidth="3" strokeOpacity="0.85" strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: 'none' }} />
+          </g>
+        );
+      })}
 
       {(linesToShow || []).map((line) => {
         const def = LINE_TYPES[line.type];
@@ -859,6 +877,53 @@ function MapLineDetail({ line, map, unit, onDelete, onClose }) {
     </div>
   );
 }
+function TrackDetail({ track, unit, onRename, onSetColor, onDelete, onClose }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [nameText, setNameText] = useState(track.name);
+  const dist = trackDistance(track.points, unit);
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 150, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'flex-end' }}>
+      <div className="w-full p-5" style={{ background: COLORS.bg, borderRadius: '16px 16px 0 0', border: `2px solid ${COLORS.line}`, borderBottom: 'none' }}>
+        <div className="flex items-center justify-between mb-3">
+          {renaming ? (
+            <div className="flex gap-2 items-center flex-1 mr-2">
+              <TextInput value={nameText} onChange={(e) => setNameText(e.target.value)} className="flex-1" autoFocus />
+              <button onClick={() => { if (nameText.trim()) onRename(nameText.trim()); setRenaming(false); }} className="text-xs underline flex-shrink-0" style={{ color: COLORS.accent }}>Save</button>
+              <button onClick={() => { setNameText(track.name); setRenaming(false); }} className="text-xs underline flex-shrink-0" style={{ color: COLORS.inkDim }}>Cancel</button>
+            </div>
+          ) : (
+            <h2 className="font-display text-lg font-bold flex items-center gap-2 flex-1 min-w-0">
+              <span style={{ display: 'inline-block', width: 20, height: 4, background: track.color, borderRadius: 2, flexShrink: 0 }} />
+              <span className="truncate">{track.name}</span>
+              <button onClick={() => { setNameText(track.name); setRenaming(true); }} className="text-xs underline flex-shrink-0" style={{ color: COLORS.accent }}>Rename</button>
+            </h2>
+          )}
+          <button onClick={onClose} className="text-2xl flex-shrink-0" style={{ color: COLORS.inkDim }}>✕</button>
+        </div>
+        <p className="text-sm mb-1" style={{ color: COLORS.accent }}>{dist.toFixed(0)} {unit === 'feet' ? 'ft' : 'm'} recorded</p>
+        <p className="text-xs mb-3" style={{ color: COLORS.inkDim }}>{fmtWhen(track.createdAt)}</p>
+        <div className="flex items-center gap-2 mb-4">
+          <label className="rounded-lg overflow-hidden flex-shrink-0" style={{ width: 36, height: 36, border: `1px solid ${COLORS.line}` }}>
+            <input type="color" value={track.color} onChange={(e) => onSetColor(e.target.value)} style={{ width: 48, height: 48, transform: 'translate(-6px, -6px)', border: 'none', padding: 0, cursor: 'pointer' }} />
+          </label>
+          <p className="text-xs flex-1" style={{ color: COLORS.inkDim }}>Tap the swatch to change this track's color</p>
+        </div>
+        {confirmDelete ? (
+          <div className="rounded-lg p-3" style={{ background: COLORS.surfaceRaised }}>
+            <p className="text-sm mb-2" style={{ color: COLORS.inkDim }}>Delete this track? This can't be undone.</p>
+            <div className="flex gap-2">
+              <Btn variant="danger" onClick={onDelete}>Yes, delete it</Btn>
+              <Btn variant="ghost" onClick={() => setConfirmDelete(false)}>Cancel</Btn>
+            </div>
+          </div>
+        ) : (
+          <button onClick={() => setConfirmDelete(true)} className="text-xs underline" style={{ color: '#E07A5F' }}>Delete this track</button>
+        )}
+      </div>
+    </div>
+  );
+}
 function RefPointForm({ pointIndex, onSubmit, onCancel }) {
   const [lat, setLat] = useState('');
   const [lng, setLng] = useState('');
@@ -1019,20 +1084,21 @@ function SettingsPanel({ maps, onDeleteMap, onRenameMap, onSelectMap, selectedMa
           </React.Fragment>
         )}
 
-        <h3 className="font-display text-sm font-bold mb-2">Your trail</h3>
+        <h3 className="font-display text-sm font-bold mb-2">Tracking</h3>
         <div className="flex gap-2 mb-2">
           <Btn variant="ghost" onClick={onToggleTrailPaused}>{trailPaused ? '● Start recording' : '■ Stop recording'}</Btn>
         </div>
+        <p className="text-xs mb-2" style={{ color: COLORS.inkDim }}>Tap any recorded track on the map to rename it, change its color, or delete it.</p>
         {confirmClearTrail ? (
           <div className="rounded-lg p-3 mb-4" style={{ background: COLORS.surfaceRaised }}>
-            <p className="text-sm mb-2" style={{ color: COLORS.inkDim }}>Clear your entire trail history? This can't be undone.</p>
+            <p className="text-sm mb-2" style={{ color: COLORS.inkDim }}>Delete every recorded track on this iPad? This can't be undone.</p>
             <div className="flex gap-2">
-              <Btn variant="danger" onClick={() => { onClearTrail(); setConfirmClearTrail(false); }}>Yes, clear it</Btn>
+              <Btn variant="danger" onClick={() => { onClearTrail(); setConfirmClearTrail(false); }}>Yes, delete them all</Btn>
               <Btn variant="ghost" onClick={() => setConfirmClearTrail(false)}>Cancel</Btn>
             </div>
           </div>
         ) : (
-          <button onClick={() => setConfirmClearTrail(true)} className="text-xs underline mb-4 block" style={{ color: '#E07A5F' }}>Clear trail history</button>
+          <button onClick={() => setConfirmClearTrail(true)} className="text-xs underline mb-4 block" style={{ color: '#E07A5F' }}>Delete all tracks</button>
         )}
 
         <h3 className="font-display text-sm font-bold mb-2">Measurement units</h3>
@@ -1051,7 +1117,24 @@ function App() {
   const [selectedMapId, setSelectedMapId] = useState(() => cacheGet('selectedMapId', null));
   const [pins, setPins] = useState(() => cacheGet('pins', []));
   const [lines, setLines] = useState(() => cacheGet('lines', []));
-  const [trail, setTrail] = useState(() => cacheGet('trail', []));
+  // Tracks — each time recording is turned on, that's a new, separate,
+  // nameable/colorable/deletable track (like a drawn line), not one single
+  // trail that grows forever. Old installs that already had a plain
+  // 'trail' array from before this existed get it wrapped into one legacy
+  // track here, once, so nobody's recorded history just vanishes.
+  const [tracks, setTracks] = useState(() => {
+    const existing = cacheGet('tracks', null);
+    if (existing) return existing;
+    const legacyTrail = cacheGet('trail', []);
+    if (legacyTrail.length > 1) {
+      const wrapped = [{ id: uid(), name: 'Trail (before tracks)', color: '#4285F4', points: legacyTrail, createdAt: new Date().toISOString() }];
+      cacheSet('tracks', wrapped);
+      return wrapped;
+    }
+    return [];
+  });
+  const [activeTrackId, setActiveTrackId] = useState(() => cacheGet('activeTrackId', null));
+  const [openTrack, setOpenTrack] = useState(null);
   // Defaults to true (not recording) so a brand-new install doesn't start
   // tracking position the moment it's opened — recording is something the
   // operator turns on, not something that just happens. Once someone
@@ -1116,11 +1199,15 @@ function App() {
         // gets added.
         if (pos.coords.accuracy != null && pos.coords.accuracy > 50) return;
         const point = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-        setTrail((prev) => {
-          const last = prev[prev.length - 1];
+        setTracks((prev) => {
+          const idx = prev.findIndex((t) => t.id === activeTrackId);
+          if (idx === -1) return prev;
+          const track = prev[idx];
+          const last = track.points[track.points.length - 1];
           if (last && last.lat === point.lat && last.lng === point.lng) return prev;
-          const next = [...prev, point];
-          cacheSet('trail', next);
+          const next = [...prev];
+          next[idx] = { ...track, points: [...track.points, point] };
+          cacheSet('tracks', next);
           return next;
         });
       },
@@ -1128,7 +1215,7 @@ function App() {
       { enableHighAccuracy: true, maximumAge: 0 }
     );
     return () => navigator.geolocation.clearWatch(watchId);
-  }, [trailPaused]);
+  }, [trailPaused, activeTrackId]);
 
   // Tracks who's signed in, purely to show a name and to gate the upload
   // button — the real enforcement is the Firebase write rule, not this.
@@ -1237,6 +1324,28 @@ function App() {
     }
   };
 
+  // Starting recording begins a brand new track (its own name, color, and
+  // history) rather than resuming whatever was recorded last time — so
+  // each day's/each machine's run stays a separate thing you can rename,
+  // recolor, or delete on its own, same as a drawn line.
+  const toggleTrailPaused = () => {
+    if (trailPaused) {
+      const newTrack = { id: uid(), name: `Track — ${fmtWhen(new Date().toISOString())}`, color: '#4285F4', points: [], createdAt: new Date().toISOString() };
+      setTracks((prev) => { const next = [...prev, newTrack]; cacheSet('tracks', next); return next; });
+      setActiveTrackId(newTrack.id);
+      cacheSet('activeTrackId', newTrack.id);
+    }
+    setTrailPaused((v) => !v);
+  };
+  const renameTrack = (trackId, newName) => setTracks((prev) => { const next = prev.map((t) => (t.id === trackId ? { ...t, name: newName } : t)); cacheSet('tracks', next); return next; });
+  const setTrackColor = (trackId, color) => setTracks((prev) => { const next = prev.map((t) => (t.id === trackId ? { ...t, color } : t)); cacheSet('tracks', next); return next; });
+  const deleteTrack = (trackId) => {
+    // Deleting the track that's actively recording would otherwise leave
+    // the app quietly recording into a track that no longer exists.
+    if (trackId === activeTrackId) { setTrailPaused(true); setActiveTrackId(null); cacheSet('activeTrackId', null); }
+    setTracks((prev) => { const next = prev.filter((t) => t.id !== trackId); cacheSet('tracks', next); return next; });
+  };
+
   const mapPins = pins.filter((p) => currentMap && p.mapId === currentMap.id);
   const mapLines = lines.filter((l) => currentMap && l.mapId === currentMap.id);
 
@@ -1249,8 +1358,8 @@ function App() {
   const mapCenterLatLng = (currentMap && currentMapGeoreferenced) ? pixelToLatLng(currentMap, currentMap.imageWidth / 2, currentMap.imageHeight / 2) : null;
   const milesFromMap = (myLiveLocation && mapCenterLatLng) ? haversineMeters(myLiveLocation.lat, myLiveLocation.lng, mapCenterLatLng.lat, mapCenterLatLng.lng) / 1609.344 : null;
   const centerOnMeDisabled = milesFromMap !== null && milesFromMap > 1;
-  const trailPixels = (currentMap && currentMapGeoreferenced)
-    ? trail.map((p) => latLngToPixel(currentMap, p.lat, p.lng)).filter(Boolean).map((p) => ({ x: p.px, y: p.py }))
+  const tracksToShow = (currentMap && currentMapGeoreferenced)
+    ? tracks.map((t) => ({ id: t.id, color: t.color, pixels: t.points.map((p) => latLngToPixel(currentMap, p.lat, p.lng)).filter(Boolean).map((p) => ({ x: p.px, y: p.py })) }))
     : [];
 
   const exitAllModes = () => { setPlacingPin(false); setMeasureMode(false); setPencilMode(false); setLinePoints([]); setCalibratingMap(false); setCalibrationPointIndex(0); setPendingCalibrationPixel(null); };
@@ -1272,7 +1381,7 @@ function App() {
         <GestureMapViewport ref={viewportRef} disablePan={placingPin || measureMode || pencilMode || calibratingMap}
           onCenterOnMe={myPosition ? () => viewportRef.current && viewportRef.current.centerOnPoint(myPosition.px, myPosition.py) : null}
           centerOnMeDisabled={centerOnMeDisabled}
-          trailPaused={trailPaused} onToggleTrailPaused={() => setTrailPaused((v) => !v)}>
+          trailPaused={trailPaused} onToggleTrailPaused={toggleTrailPaused}>
           <MapCanvas
             viewportRef={viewportRef}
             viewBoxWidth={currentMap ? currentMap.imageWidth : 560}
@@ -1286,13 +1395,14 @@ function App() {
             drawingPoints={linePoints}
             calibrating={calibratingMap}
             refPoints={currentMap ? currentMap.refPoints : []}
-            trail={trailPixels}
+            tracksToShow={tracksToShow}
             myPosition={myPosition}
             onMapTap={handleMapTap}
             onFreehandPoint={handleFreehandPoint}
             onFreehandEnd={handleFreehandEnd}
             onPinTap={(id) => setOpenPin(mapPins.find((p) => p.id === id))}
             onLineTap={(id) => setOpenLine(mapLines.find((l) => l.id === id))}
+            onTrackTap={(id) => setOpenTrack(tracks.find((t) => t.id === id))}
           />
         </GestureMapViewport>
       </div>
@@ -1370,6 +1480,16 @@ function App() {
       {openLine && (
         <MapLineDetail line={openLine} map={currentMap} unit={unit} onDelete={() => { setLines((prev) => prev.filter((l) => l.id !== openLine.id)); setOpenLine(null); }} onClose={() => setOpenLine(null)} />
       )}
+      {openTrack && (
+        <TrackDetail
+          track={tracks.find((t) => t.id === openTrack.id) || openTrack}
+          unit={unit}
+          onRename={(name) => { renameTrack(openTrack.id, name); setOpenTrack(null); }}
+          onSetColor={(color) => setTrackColor(openTrack.id, color)}
+          onDelete={() => { deleteTrack(openTrack.id); setOpenTrack(null); }}
+          onClose={() => setOpenTrack(null)}
+        />
+      )}
       {pendingCalibrationPixel && currentMap && (
         <RefPointForm
           pointIndex={calibrationPointIndex}
@@ -1392,8 +1512,8 @@ function App() {
           selectedMapId={selectedMapId}
           onCalibrate={() => { exitAllModes(); setCalibratingMap(true); setShowSettings(false); }}
           trailPaused={trailPaused}
-          onToggleTrailPaused={() => setTrailPaused((v) => !v)}
-          onClearTrail={() => setTrail([]) || cacheSet('trail', [])}
+          onToggleTrailPaused={toggleTrailPaused}
+          onClearTrail={() => { setTracks([]); cacheSet('tracks', []); setActiveTrackId(null); cacheSet('activeTrackId', null); }}
           unit={unit}
           onSetUnit={setUnit}
           authUser={authUser}
