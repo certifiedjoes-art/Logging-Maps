@@ -456,6 +456,8 @@ const LINE_TYPES = {
   road: { label: 'Road', color: '#C9A227' },
   skidTrail: { label: 'Skid Trail', color: '#8B5E3C' },
   cutblockBoundary: { label: 'Cutblock Boundary', color: '#D14848' },
+  wetArea: { label: 'Wet Area', color: '#5C8AA8' },
+  route: { label: 'Route / Directions', color: '#4285F4' },
   other: { label: 'Other', color: '#9B8AA8' },
 };
 
@@ -700,7 +702,7 @@ function MapCanvas({ viewportRef, viewBoxWidth, viewBoxHeight, backgroundImageUr
       })}
 
       {(linesToShow || []).map((line) => {
-        const def = LINE_TYPES[line.type];
+        const def = LINE_TYPES[line.type] || LINE_TYPES.other;
         const pointsAttr = line.points.map((p) => `${p.x},${p.y}`).join(' ');
         const strokeColor = line.color || def.color;
         const strokeW = line.strokeWidth || 3;
@@ -729,7 +731,7 @@ function MapCanvas({ viewportRef, viewBoxWidth, viewBoxHeight, backgroundImageUr
       ))}
 
       {(pinsToShow || []).map((pin) => {
-        const def = PIN_TYPES[pin.type];
+        const def = PIN_TYPES[pin.type] || PIN_TYPES.other;
         return (
           <g key={pin.id} transform={`translate(${pin.x}, ${pin.y})`} onClick={(e) => { e.stopPropagation(); if (!anyDrawMode) onPinTap(pin.id); }} style={{ cursor: anyDrawMode ? 'crosshair' : 'pointer' }}>
             <circle r="12" fill={def.color} stroke="#fff" strokeWidth="2" />
@@ -774,7 +776,7 @@ function MapPinForm({ onSubmit, onCancel }) {
 }
 function MapPinDetail({ pin, onDelete, onClose }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const def = PIN_TYPES[pin.type];
+  const def = PIN_TYPES[pin.type] || PIN_TYPES.other;
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 150, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'flex-end' }}>
       <div className="w-full p-5" style={{ background: COLORS.bg, borderRadius: '16px 16px 0 0', border: `2px solid ${COLORS.line}`, borderBottom: 'none' }}>
@@ -792,6 +794,8 @@ function MapPinDetail({ pin, onDelete, onClose }) {
               <Btn variant="ghost" onClick={() => setConfirmDelete(false)}>Cancel</Btn>
             </div>
           </div>
+        ) : pin.harder ? (
+          <p className="text-xs" style={{ color: COLORS.inkDim }}>🔗 From the Harder app — edit or remove it there.</p>
         ) : (
           <button onClick={() => setConfirmDelete(true)} className="text-xs underline" style={{ color: '#E07A5F' }}>Delete this pin</button>
         )}
@@ -846,7 +850,7 @@ function MapLineForm({ onSubmit, onCancel }) {
 }
 function MapLineDetail({ line, map, unit, onDelete, onClose }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const def = LINE_TYPES[line.type];
+  const def = LINE_TYPES[line.type] || LINE_TYPES.other;
   const realLen = realLineLength(map, line.points, unit);
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 150, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'flex-end' }}>
@@ -870,6 +874,8 @@ function MapLineDetail({ line, map, unit, onDelete, onClose }) {
               <Btn variant="ghost" onClick={() => setConfirmDelete(false)}>Cancel</Btn>
             </div>
           </div>
+        ) : line.harder ? (
+          <p className="text-xs" style={{ color: COLORS.inkDim }}>🔗 From the Harder app — edit or remove it there.</p>
         ) : (
           <button onClick={() => setConfirmDelete(true)} className="text-xs underline" style={{ color: '#E07A5F' }}>Delete this line</button>
         )}
@@ -920,6 +926,36 @@ function TrackDetail({ track, unit, onRename, onSetColor, onDelete, onClose }) {
         ) : (
           <button onClick={() => setConfirmDelete(true)} className="text-xs underline" style={{ color: '#E07A5F' }}>Delete this track</button>
         )}
+      </div>
+    </div>
+  );
+}
+// Shown when recording stops: a daily trail stays private to this iPad, but
+// if you just walked a boundary / road / wet area, pick what it is and it
+// becomes a regular line that's shared to every iPad.
+function TrackFinishForm({ canConvert, mapShared, onChoose, onKeepPrivate }) {
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 150, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'flex-end' }}>
+      <div className="w-full p-5" style={{ background: COLORS.bg, borderRadius: '16px 16px 0 0', border: `2px solid ${COLORS.line}`, borderBottom: 'none' }}>
+        <h2 className="font-display text-lg font-bold mb-1">Did you just mark something?</h2>
+        {canConvert ? (
+          <React.Fragment>
+            <p className="text-xs mb-3" style={{ color: COLORS.inkDim }}>
+              Pick what you walked and it goes on the map as a line{mapShared ? ' for every iPad' : " (this map isn't shared, so only this iPad will see it)"}. Otherwise keep it as your private trail.
+            </p>
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              {Object.entries(LINE_TYPES).map(([key, def]) => (
+                <button key={key} onClick={() => onChoose(key)} className="rounded-lg px-3 py-3 text-sm font-semibold flex items-center justify-center gap-2"
+                  style={{ background: COLORS.surfaceRaised, color: COLORS.ink, border: `1px solid ${COLORS.line}` }}>
+                  <span style={{ display: 'inline-block', width: 16, height: 4, background: def.color, borderRadius: 2 }} />{def.label}
+                </button>
+              ))}
+            </div>
+          </React.Fragment>
+        ) : (
+          <p className="text-xs mb-3" style={{ color: COLORS.inkDim }}>This map isn't calibrated yet, so the walk can't be turned into a shared line. It's kept as your private trail.</p>
+        )}
+        <Btn variant="ghost" onClick={onKeepPrivate}>Just my daily trail — keep private</Btn>
       </div>
     </div>
   );
@@ -1001,7 +1037,7 @@ function ShareLoginForm({ onSignedIn, onCancel }) {
 }
 
 // ---------- Settings panel: manage maps, clear trail, units ----------
-function SettingsPanel({ maps, onDeleteMap, onRenameMap, onSelectMap, selectedMapId, onCalibrate, trailPaused, onToggleTrailPaused, onClearTrail, unit, onSetUnit, authUser, onSignOut, onUploadShared, uploadingShared, uploadError, onClose }) {
+function SettingsPanel({ harderStatus, maps, onDeleteMap, onRenameMap, onSelectMap, selectedMapId, onCalibrate, trailPaused, onToggleTrailPaused, onClearTrail, unit, onSetUnit, authUser, onSignOut, onUploadShared, uploadingShared, uploadError, onClose }) {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [confirmClearTrail, setConfirmClearTrail] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
@@ -1016,6 +1052,9 @@ function SettingsPanel({ maps, onDeleteMap, onRenameMap, onSelectMap, selectedMa
         </div>
 
         <h3 className="font-display text-sm font-bold mb-2">Maps on this iPad</h3>
+        {harderStatus === 'denied' && (
+          <p className="text-xs mb-2" style={{ color: '#E07A5F' }}>⚠️ Couldn't read maps from the Harder app (access not allowed yet). Your other maps are fine.</p>
+        )}
         {maps.length > 0 && (
           <div className="space-y-2 mb-3">
             {maps.map((m) => (
@@ -1029,15 +1068,17 @@ function SettingsPanel({ maps, onDeleteMap, onRenameMap, onSelectMap, selectedMa
                 ) : (
                   <div className="flex items-center justify-between gap-2">
                     <button onClick={() => onSelectMap(m.id)} className="text-left flex-1 min-w-0">
-                      <span className="text-sm font-semibold block truncate">{m.name}{m.shared ? ' 🌐' : ''}</span>
+                      <span className="text-sm font-semibold block truncate">{m.name}{m.shared ? ' 🌐' : ''}{m.harder ? ' 🔗' : ''}</span>
                       <span className="text-xs" style={{ color: COLORS.accent }}>
-                        {m.shared ? 'Shared — synced automatically' : ''}{m.shared && ' · '}
+                        {m.shared ? 'Shared — synced automatically' : ''}{m.harder ? 'Linked from Harder app' : ''}{(m.shared || m.harder) && ' · '}
                         {m.geoCorners ? '🛰️ Georeferenced' : (isMapGeoreferenced(m) ? '🗺️ Georeferenced (manual)' : '⬜ Not calibrated yet')}
                       </span>
                     </button>
                     <div className="flex gap-2 flex-shrink-0 items-center">
-                      <button onClick={() => { setRenamingId(m.id); setRenameText(m.name); }} className="text-xs underline" style={{ color: COLORS.accent }}>Rename</button>
-                      {m.shared ? (
+                      {!m.harder && <button onClick={() => { setRenamingId(m.id); setRenameText(m.name); }} className="text-xs underline" style={{ color: COLORS.accent }}>Rename</button>}
+                      {m.harder ? (
+                        <span className="text-xs" style={{ color: COLORS.inkDim }}>Managed in Harder app</span>
+                      ) : m.shared ? (
                         <span className="text-xs" style={{ color: COLORS.inkDim }}>Delete from shared library to remove</span>
                       ) : confirmDeleteId === m.id ? (
                         <React.Fragment>
@@ -1088,7 +1129,7 @@ function SettingsPanel({ maps, onDeleteMap, onRenameMap, onSelectMap, selectedMa
         <div className="flex gap-2 mb-2">
           <Btn variant="ghost" onClick={onToggleTrailPaused}>{trailPaused ? '● Start recording' : '■ Stop recording'}</Btn>
         </div>
-        <p className="text-xs mb-2" style={{ color: COLORS.inkDim }}>Tap any recorded track on the map to rename it, change its color, or delete it.</p>
+        <p className="text-xs mb-2" style={{ color: COLORS.inkDim }}>Your recorded tracks stay on this iPad. To share something with every iPad (a boundary, road or wet area you walked), pick what it is when you stop recording. Tap any track on the map to rename it, recolor it, or delete it.</p>
         {confirmClearTrail ? (
           <div className="rounded-lg p-3 mb-4" style={{ background: COLORS.surfaceRaised }}>
             <p className="text-sm mb-2" style={{ color: COLORS.inkDim }}>Delete every recorded track on this iPad? This can't be undone.</p>
@@ -1135,6 +1176,7 @@ function App() {
   });
   const [activeTrackId, setActiveTrackId] = useState(() => cacheGet('activeTrackId', null));
   const [openTrack, setOpenTrack] = useState(null);
+  const [finishedTrackId, setFinishedTrackId] = useState(null);
   // Defaults to true (not recording) so a brand-new install doesn't start
   // tracking position the moment it's opened — recording is something the
   // operator turns on, not something that just happens. Once someone
@@ -1216,6 +1258,85 @@ function App() {
     );
     return () => navigator.geolocation.clearWatch(watchId);
   }, [trailPaused, activeTrackId]);
+
+  // ---- Pins + lines on this iPad ----
+  // Anything dropped or drawn here stays on this iPad (nothing is uploaded).
+  // Pins/lines from the Harder app arrive separately (read-only) below.
+  const deleteMarking = (col, id) => {
+    (col === 'Pins' ? setPins : setLines)((prev) => prev.filter((x) => x.id !== id));
+  };
+
+  // ---- Linked from the Harder app (one-way, read-only) ----
+  // Public maps, plus their always-public pins/lines (hazards, wet land,
+  // accidents, roads, skid trails, boundaries, routes) flow in from the
+  // Harder Contracting app's database. Nothing here ever writes back.
+  const [harderPins, setHarderPins] = useState(() => cacheGet('harderPins', []));
+  const [harderLines, setHarderLines] = useState(() => cacheGet('harderLines', []));
+  const [harderStatus, setHarderStatus] = useState('');
+  useEffect(() => { cacheSet('harderPins', harderPins); }, [harderPins]);
+  useEffect(() => { cacheSet('harderLines', harderLines); }, [harderLines]);
+
+  useEffect(() => {
+    const db = firebase.database();
+    const subs = [];
+    const onErr = () => setHarderStatus('denied');
+    const toArr = (raw) => (Array.isArray(raw) ? raw : Object.keys(raw || {}).sort((a, b) => a - b).map((k) => raw[k]));
+
+    const mapRef = db.ref('mapRecords');
+    const mapH = mapRef.on('value', (snap) => {
+      setHarderStatus('ok');
+      const entries = Object.values(snap.val() || {}).filter((m) => m && m.isPublic && typeof m.imageUrl === 'string' && /^https?:/.test(m.imageUrl) && m.imageWidth && m.imageHeight);
+      (async () => {
+        for (const entry of entries) {
+          const cacheKey = 'harderver:' + entry.id;
+          if (cacheGet(cacheKey, null) === entry.imageUrl) continue;
+          try {
+            const resp = await fetch(entry.imageUrl);
+            if (!resp.ok) continue;
+            const blob = await resp.blob();
+            await idbSetMapImageBlob(entry.id, blob);
+            cacheSet(cacheKey, entry.imageUrl);
+          } catch (e) { continue; }
+        }
+        setMaps((prev) => {
+          const others = prev.filter((m) => !m.harder && !entries.some((e) => e.id === m.id));
+          const linked = entries.filter((e) => cacheGet('harderver:' + e.id, null) === e.imageUrl || prev.some((m) => m.id === e.id)).map((e) => ({
+            id: e.id, name: e.name, harder: true,
+            imageWidth: e.imageWidth, imageHeight: e.imageHeight,
+            geoCorners: e.geoCorners || null, geoBBoxFraction: e.geoBBoxFraction || null,
+            refPoints: toArr(e.refPoints), addedAt: e.addedAt,
+          }));
+          return [...others, ...linked];
+        });
+      })();
+    }, onErr);
+    subs.push(() => mapRef.off('value', mapH));
+
+    const PUB_PINS = ['hazard', 'wetland', 'accident'];
+    const PUB_LINES = ['road', 'skidTrail', 'cutblockBoundary', 'route'];
+    const pinRef = db.ref('mapPinRecords');
+    const pinH = pinRef.on('value', (snap) => {
+      const list = Object.values(snap.val() || {}).filter((p) => p && typeof p.x === 'number' && typeof p.y === 'number' && (PUB_PINS.includes(p.type) || p.isPublic))
+        .map((p) => ({ id: 'h-' + p.id, mapId: p.mapId, x: p.x, y: p.y, type: p.type, note: p.note || '', time: p.time, harder: true }));
+      setHarderPins(list);
+    }, onErr);
+    subs.push(() => pinRef.off('value', pinH));
+
+    const lineRef = db.ref('mapLineRecords');
+    const lineH = lineRef.on('value', (snap) => {
+      const list = [];
+      Object.values(snap.val() || {}).forEach((l) => {
+        if (!l || !(PUB_LINES.includes(l.type) || l.isPublic)) return;
+        const pts = toArr(l.points).filter((p) => p && ((typeof p.x === 'number' && typeof p.y === 'number') || (typeof p.lat === 'number' && typeof p.lng === 'number')));
+        if (pts.length < 2) return;
+        list.push({ id: 'h-' + l.id, mapId: l.mapId, points: pts, type: l.type, color: l.color, strokeWidth: l.strokeWidth, note: l.note || '', time: l.time, harder: true });
+      });
+      setHarderLines(list);
+    }, onErr);
+    subs.push(() => lineRef.off('value', lineH));
+
+    return () => subs.forEach((u) => u());
+  }, []);
 
   // Tracks who's signed in, purely to show a name and to gate the upload
   // button — the real enforcement is the Firebase write rule, not this.
@@ -1334,8 +1455,25 @@ function App() {
       setTracks((prev) => { const next = [...prev, newTrack]; cacheSet('tracks', next); return next; });
       setActiveTrackId(newTrack.id);
       cacheSet('activeTrackId', newTrack.id);
+    } else {
+      // Stopping — ask whether this was a daily trail or something to share.
+      const finished = tracks.find((t) => t.id === activeTrackId);
+      if (finished && finished.points.length >= 2) setFinishedTrackId(finished.id);
     }
     setTrailPaused((v) => !v);
+  };
+  const finishTrackAsLine = (type) => {
+    const t = tracks.find((x) => x.id === finishedTrackId);
+    if (t && currentMap && currentMapGeoreferenced) {
+      const pts = t.points.map((p) => latLngToPixel(currentMap, p.lat, p.lng)).filter(Boolean).map((p) => ({ x: Math.round(p.px), y: Math.round(p.py) }));
+      if (pts.length >= 2) {
+        setLines((prev) => [...prev, { id: uid(), mapId: currentMap.id, type, note: '', color: null, strokeWidth: 3, points: pts, time: new Date().toISOString() }]);
+        setTracks((prev) => { const next = prev.filter((x) => x.id !== t.id); cacheSet('tracks', next); return next; });
+        setActiveTrackId(null);
+        cacheSet('activeTrackId', null);
+      }
+    }
+    setFinishedTrackId(null);
   };
   const renameTrack = (trackId, newName) => setTracks((prev) => { const next = prev.map((t) => (t.id === trackId ? { ...t, name: newName } : t)); cacheSet('tracks', next); return next; });
   const setTrackColor = (trackId, color) => setTracks((prev) => { const next = prev.map((t) => (t.id === trackId ? { ...t, color } : t)); cacheSet('tracks', next); return next; });
@@ -1346,8 +1484,15 @@ function App() {
     setTracks((prev) => { const next = prev.filter((t) => t.id !== trackId); cacheSet('tracks', next); return next; });
   };
 
-  const mapPins = pins.filter((p) => currentMap && p.mapId === currentMap.id);
-  const mapLines = lines.filter((l) => currentMap && l.mapId === currentMap.id);
+  const mapPins = [...pins, ...harderPins].filter((p) => currentMap && p.mapId === currentMap.id);
+  const mapLines = [...lines, ...harderLines].filter((l) => currentMap && l.mapId === currentMap.id).map((l) => {
+    // Harder-app lines drawn in GPS coordinates get placed on this map's pixels.
+    if (l.points[0] && typeof l.points[0].lat === 'number') {
+      const pts = l.points.map((p) => { if (typeof p.lat !== 'number') return p; const r = latLngToPixel(currentMap, p.lat, p.lng); return r ? { x: r.px, y: r.py } : null; }).filter((p) => p && typeof p.x === 'number');
+      return { ...l, points: pts };
+    }
+    return l;
+  }).filter((l) => l.points.length >= 2);
 
   const myPosition = (currentMap && currentMapGeoreferenced && myLiveLocation) ? latLngToPixel(currentMap, myLiveLocation.lat, myLiveLocation.lng) : null;
   // How far the operator's actual GPS position is from this map's real-world
@@ -1463,7 +1608,7 @@ function App() {
         />
       )}
       {openPin && (
-        <MapPinDetail pin={openPin} onDelete={() => { setPins((prev) => prev.filter((p) => p.id !== openPin.id)); setOpenPin(null); }} onClose={() => setOpenPin(null)} />
+        <MapPinDetail pin={openPin} onDelete={() => { deleteMarking('Pins', openPin.id); setOpenPin(null); }} onClose={() => setOpenPin(null)} />
       )}
       {pendingLineSubmit && (
         <MapLineForm
@@ -1478,7 +1623,15 @@ function App() {
         />
       )}
       {openLine && (
-        <MapLineDetail line={openLine} map={currentMap} unit={unit} onDelete={() => { setLines((prev) => prev.filter((l) => l.id !== openLine.id)); setOpenLine(null); }} onClose={() => setOpenLine(null)} />
+        <MapLineDetail line={openLine} map={currentMap} unit={unit} onDelete={() => { deleteMarking('Lines', openLine.id); setOpenLine(null); }} onClose={() => setOpenLine(null)} />
+      )}
+      {finishedTrackId && (
+        <TrackFinishForm
+          canConvert={!!(currentMap && currentMapGeoreferenced)}
+          mapShared={!!(currentMap && currentMap.shared)}
+          onChoose={finishTrackAsLine}
+          onKeepPrivate={() => setFinishedTrackId(null)}
+        />
       )}
       {openTrack && (
         <TrackDetail
@@ -1505,6 +1658,7 @@ function App() {
       )}
       {showSettings && (
         <SettingsPanel
+          harderStatus={harderStatus}
           maps={maps}
           onDeleteMap={deleteMap}
           onRenameMap={renameMap}
