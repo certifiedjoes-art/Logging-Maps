@@ -416,10 +416,18 @@ function realLineLength(map, points, unit) {
 // A recorded track's own points are already real lat/lng (that's the whole
 // point of GPS tracking), so unlike realLineLength above this needs no map
 // or georeferencing to work — it adds up straight from the GPS points.
+function splitTrackSegments(points) {
+  const segs = [];
+  (points || []).forEach((p) => {
+    if (!segs.length || p.gap) segs.push([]);
+    segs[segs.length - 1].push(p);
+  });
+  return segs;
+}
 function trackDistance(points, unit) {
   if (!points || points.length < 2) return 0;
   let totalMeters = 0;
-  for (let i = 1; i < points.length; i++) totalMeters += haversineMeters(points[i - 1].lat, points[i - 1].lng, points[i].lat, points[i].lng);
+  for (let i = 1; i < points.length; i++) if (!points[i].gap) totalMeters += haversineMeters(points[i - 1].lat, points[i - 1].lng, points[i].lat, points[i].lng);
   return unit === 'feet' ? totalMeters * 3.28084 : totalMeters;
 }
 
@@ -689,14 +697,20 @@ function MapCanvas({ viewportRef, viewBoxWidth, viewBoxHeight, backgroundImageUr
       )}
 
       {(tracksToShow || []).map((track) => {
-        if (!track.pixels || track.pixels.length < 2) return null;
-        const pointsAttr = track.pixels.map((p) => `${p.x},${p.y}`).join(' ');
         return (
           <g key={track.id}>
-            <polyline points={pointsAttr} fill="none" stroke="transparent" strokeWidth="19"
-              style={{ pointerEvents: anyDrawMode ? 'none' : 'stroke', cursor: 'pointer' }}
-              onClick={(e) => { e.stopPropagation(); if (!anyDrawMode) onTrackTap(track.id); }} />
-            <polyline points={pointsAttr} fill="none" stroke={track.color} strokeWidth="3" strokeOpacity="0.85" strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: 'none' }} />
+            {(track.segments || []).map((seg, si) => {
+              if (seg.length < 2) return null;
+              const pointsAttr = seg.map((p) => `${p.x},${p.y}`).join(' ');
+              return (
+                <g key={si}>
+                  <polyline points={pointsAttr} fill="none" stroke="transparent" strokeWidth="19"
+                    style={{ pointerEvents: anyDrawMode ? 'none' : 'stroke', cursor: 'pointer' }}
+                    onClick={(e) => { e.stopPropagation(); if (!anyDrawMode) onTrackTap(track.id); }} />
+                  <polyline points={pointsAttr} fill="none" stroke={track.color} strokeWidth="3" strokeOpacity="0.85" strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: 'none' }} />
+                </g>
+              );
+            })}
           </g>
         );
       })}
@@ -1227,6 +1241,26 @@ function App() {
     return () => navigator.geolocation.clearWatch(watchId);
   }, []);
 
+  // Keep the screen awake while recording. A web app can't track GPS with the
+  // screen off (iPadOS freezes the page), so the best we can do is ask the
+  // iPad not to sleep. Re-requested whenever the app comes back to the front.
+  useEffect(() => {
+    if (trailPaused || !('wakeLock' in navigator)) return undefined;
+    let lock = null, cancelled = false;
+    const acquire = async () => {
+      try {
+        if (document.visibilityState !== 'visible') return;
+        const l = await navigator.wakeLock.request('screen');
+        if (cancelled) { l.release().catch(() => {}); return; }
+        lock = l;
+      } catch (e) {}
+    };
+    const onVis = () => { if (document.visibilityState === 'visible') acquire(); };
+    acquire();
+    document.addEventListener('visibilitychange', onVis);
+    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVis); if (lock) lock.release().catch(() => {}); };
+  }, [trailPaused]);
+
   // Trail — accumulates forever, in real lat/lng, independent of which map
   // is currently open. Converted to this map's pixel space only for display.
   useEffect(() => {
@@ -1240,13 +1274,18 @@ function App() {
         // permanently. Reject anything coarser than 50m before it ever
         // gets added.
         if (pos.coords.accuracy != null && pos.coords.accuracy > 50) return;
-        const point = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        const now = Date.now();
+        const point = { lat: pos.coords.latitude, lng: pos.coords.longitude, t: now };
         setTracks((prev) => {
           const idx = prev.findIndex((t) => t.id === activeTrackId);
           if (idx === -1) return prev;
           const track = prev[idx];
           const last = track.points[track.points.length - 1];
           if (last && last.lat === point.lat && last.lng === point.lng) return prev;
+          // No fix for a while (screen was asleep, lost signal) → the path
+          // between the last point and this one is unknown, so start a new
+          // segment instead of drawing a straight line across the gap.
+          if (last && last.t && now - last.t > 45000) point.gap = true;
           const next = [...prev];
           next[idx] = { ...track, points: [...track.points, point] };
           cacheSet('tracks', next);
@@ -1465,9 +1504,9 @@ function App() {
   const finishTrackAsLine = (type) => {
     const t = tracks.find((x) => x.id === finishedTrackId);
     if (t && currentMap && currentMapGeoreferenced) {
-      const pts = t.points.map((p) => latLngToPixel(currentMap, p.lat, p.lng)).filter(Boolean).map((p) => ({ x: Math.round(p.px), y: Math.round(p.py) }));
-      if (pts.length >= 2) {
-        setLines((prev) => [...prev, { id: uid(), mapId: currentMap.id, type, note: '', color: null, strokeWidth: 3, points: pts, time: new Date().toISOString() }]);
+      const segs = splitTrackSegments(t.points).map((seg) => seg.map((p) => latLngToPixel(currentMap, p.lat, p.lng)).filter(Boolean).map((p) => ({ x: Math.round(p.px), y: Math.round(p.py) }))).filter((sg) => sg.length >= 2);
+      if (segs.length) {
+        setLines((prev) => [...prev, ...segs.map((pts) => ({ id: uid(), mapId: currentMap.id, type, note: '', color: null, strokeWidth: 3, points: pts, time: new Date().toISOString() }))]);
         setTracks((prev) => { const next = prev.filter((x) => x.id !== t.id); cacheSet('tracks', next); return next; });
         setActiveTrackId(null);
         cacheSet('activeTrackId', null);
@@ -1504,7 +1543,7 @@ function App() {
   const milesFromMap = (myLiveLocation && mapCenterLatLng) ? haversineMeters(myLiveLocation.lat, myLiveLocation.lng, mapCenterLatLng.lat, mapCenterLatLng.lng) / 1609.344 : null;
   const centerOnMeDisabled = milesFromMap !== null && milesFromMap > 1;
   const tracksToShow = (currentMap && currentMapGeoreferenced)
-    ? tracks.map((t) => ({ id: t.id, color: t.color, pixels: t.points.map((p) => latLngToPixel(currentMap, p.lat, p.lng)).filter(Boolean).map((p) => ({ x: p.px, y: p.py })) }))
+    ? tracks.map((t) => ({ id: t.id, color: t.color, segments: splitTrackSegments(t.points).map((seg) => seg.map((p) => latLngToPixel(currentMap, p.lat, p.lng)).filter(Boolean).map((p) => ({ x: p.px, y: p.py }))) }))
     : [];
 
   const exitAllModes = () => { setPlacingPin(false); setMeasureMode(false); setPencilMode(false); setLinePoints([]); setCalibratingMap(false); setCalibrationPointIndex(0); setPendingCalibrationPixel(null); };
@@ -1515,7 +1554,8 @@ function App() {
     if (measureMode) { setLinePoints((prev) => [...prev, { x, y }]); return; }
   };
   const handleFreehandPoint = (x, y) => setLinePoints((prev) => [...prev, { x, y }]);
-  const handleFreehandEnd = () => { if (linePoints.length >= 2) setPendingLineSubmit(true); };
+  // Lifting your finger no longer ends the line — keep drawing, then tap ✓ Done.
+  const handleFreehandEnd = () => {};
 
   const pill = { background: 'rgba(27,31,25,0.82)', backdropFilter: 'blur(2px)', border: `1px solid ${COLORS.line}` };
 
@@ -1581,7 +1621,7 @@ function App() {
           className="text-xs font-semibold px-3 py-2 rounded-full" style={{ ...pill, background: pencilMode ? COLORS.accent : pill.background, color: pencilMode ? COLORS.ink2 : COLORS.ink, pointerEvents: 'auto' }}>
           {pencilMode ? 'Cancel' : '✏️ Pencil'}
         </button>
-        {measureMode && linePoints.length >= 2 && (
+        {(measureMode || pencilMode) && linePoints.length >= 2 && (
           <button onClick={() => setPendingLineSubmit(true)} className="text-xs font-semibold px-3 py-2 rounded-full" style={{ background: COLORS.accent, color: COLORS.ink2, pointerEvents: 'auto' }}>✓ Done</button>
         )}
       </div>
