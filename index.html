@@ -1074,12 +1074,22 @@ function ShareLoginForm({ onSignedIn, onCancel }) {
 }
 
 // ---------- Settings panel: manage maps, clear trail, units ----------
-function SettingsPanel({ harderStatus, maps, onDeleteMap, onRenameMap, onSelectMap, selectedMapId, onCalibrate, trailPaused, onToggleTrailPaused, onClearTrail, unit, onSetUnit, authUser, onSignOut, onUploadShared, uploadingShared, uploadError, onClose }) {
+function SettingsPanel({ harderStatus, mapFolders, maps, onDeleteMap, onRenameMap, onSelectMap, selectedMapId, onCalibrate, trailPaused, onToggleTrailPaused, onClearTrail, unit, onSetUnit, authUser, onSignOut, onUploadShared, uploadingShared, uploadError, onClose }) {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [confirmClearTrail, setConfirmClearTrail] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const [renamingId, setRenamingId] = useState(null);
   const [renameText, setRenameText] = useState('');
+  const [openFolderKey, setOpenFolderKey] = useState(null); // which folder's page is open (null = the folder list)
+  // Folders come from the Harder app (set up there by admin). Maps without a
+  // folder — or in one that no longer exists — land under "Unfiled".
+  const sortedFolders = [...(mapFolders || [])].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true }));
+  const folderIdSet = new Set(sortedFolders.map((f) => f.id));
+  const mapGroups = [
+    ...sortedFolders.map((f) => ({ key: f.id, folder: f, maps: maps.filter((m) => m.folderId === f.id) })).filter((g) => g.maps.length > 0),
+    { key: '_unfiled', folder: null, maps: maps.filter((m) => !m.folderId || !folderIdSet.has(m.folderId)) },
+  ];
+  const activeGroup = openFolderKey ? mapGroups.find((g) => g.folder && g.key === openFolderKey) || null : null;
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 140, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'flex-end' }}>
       <div className="w-full p-5" style={{ background: COLORS.bg, borderRadius: '16px 16px 0 0', maxHeight: '85vh', overflowY: 'auto', border: `2px solid ${COLORS.line}`, borderBottom: 'none' }}>
@@ -1088,13 +1098,28 @@ function SettingsPanel({ harderStatus, maps, onDeleteMap, onRenameMap, onSelectM
           <button onClick={onClose} className="text-2xl" style={{ color: COLORS.inkDim }}>✕</button>
         </div>
 
-        <h3 className="font-display text-sm font-bold mb-2">Maps on this iPad</h3>
+        {activeGroup ? (
+          <div className="flex items-center gap-2 mb-3 pb-3" style={{ borderBottom: `1px solid ${COLORS.line}` }}>
+            <button onClick={() => setOpenFolderKey(null)} className="text-xl leading-none px-2" style={{ color: COLORS.accent }} title="Close folder">✕</button>
+            <span className="font-display text-base font-bold flex-1">📁 {activeGroup.folder.name}</span>
+          </div>
+        ) : (
+          <h3 className="font-display text-sm font-bold mb-2">Maps on this iPad</h3>
+        )}
         {harderStatus === 'denied' && (
           <p className="text-xs mb-2" style={{ color: '#E07A5F' }}>⚠️ Couldn't read maps from the Harder app (access not allowed yet). Your other maps are fine.</p>
         )}
         {maps.length > 0 && (
           <div className="space-y-2 mb-3">
-            {maps.map((m) => (
+            {mapGroups.map((g) => (
+              <React.Fragment key={g.key}>
+                {!activeGroup && g.folder && (
+                  <button onClick={() => setOpenFolderKey(g.key)} className="w-full flex items-center justify-between rounded-lg p-3 text-left" style={{ background: COLORS.surface, border: `1px solid ${COLORS.line}` }}>
+                    <span className="text-sm font-bold" style={{ color: g.folder ? COLORS.ink : COLORS.inkDim }}>{'📁 ' + g.folder.name} <span className="text-xs" style={{ color: COLORS.inkDim, fontWeight: 400 }}>({g.maps.length})</span></span>
+                    <span className="text-xs" style={{ color: COLORS.inkDim }}>›</span>
+                  </button>
+                )}
+                {(g.folder ? (activeGroup && activeGroup.key === g.key) : !activeGroup) && g.maps.map((m) => (
               <div key={m.id} className="rounded-lg p-3" style={{ background: m.id === selectedMapId ? COLORS.surfaceRaised : COLORS.surface, border: `1px solid ${m.id === selectedMapId ? COLORS.accent : COLORS.line}` }}>
                 {renamingId === m.id ? (
                   <div className="flex gap-2 items-center mb-1">
@@ -1129,10 +1154,14 @@ function SettingsPanel({ harderStatus, maps, onDeleteMap, onRenameMap, onSelectM
                   </div>
                 )}
               </div>
+                ))}
+              </React.Fragment>
             ))}
           </div>
         )}
 
+        {!activeGroup && (
+        <React.Fragment>
         <div className="h-px my-4" style={{ background: COLORS.line }} />
 
         <h3 className="font-display text-sm font-bold mb-1">🌐 Upload & Share</h3>
@@ -1184,6 +1213,8 @@ function SettingsPanel({ harderStatus, maps, onDeleteMap, onRenameMap, onSelectM
           <Btn variant={unit === 'meters' ? 'primary' : 'ghost'} onClick={() => onSetUnit('meters')}>Meters</Btn>
           <Btn variant={unit === 'feet' ? 'primary' : 'ghost'} onClick={() => onSetUnit('feet')}>Feet</Btn>
         </div>
+        </React.Fragment>
+        )}
       </div>
     </div>
   );
@@ -1335,6 +1366,8 @@ function App() {
   const [harderPins, setHarderPins] = useState(() => cacheGet('harderPins', []));
   const [harderLines, setHarderLines] = useState(() => cacheGet('harderLines', []));
   const [harderStatus, setHarderStatus] = useState('');
+  const [mapFolders, setMapFolders] = useState(() => cacheGet('mapFolders', []));
+  useEffect(() => { cacheSet('mapFolders', mapFolders); }, [mapFolders]);
   useEffect(() => { cacheSet('harderPins', harderPins); }, [harderPins]);
   useEffect(() => { cacheSet('harderLines', harderLines); }, [harderLines]);
 
@@ -1366,13 +1399,19 @@ function App() {
             id: e.id, name: e.name, harder: true,
             imageWidth: e.imageWidth, imageHeight: e.imageHeight,
             geoCorners: e.geoCorners || null, geoBBoxFraction: e.geoBBoxFraction || null,
-            refPoints: toArr(e.refPoints), addedAt: e.addedAt,
+            refPoints: toArr(e.refPoints), addedAt: e.addedAt, folderId: e.folderId || null,
           }));
           return [...others, ...linked];
         });
       })();
     }, onErr);
     subs.push(() => mapRef.off('value', mapH));
+
+    const folderRef = db.ref('mapFolders');
+    const folderH = folderRef.on('value', (snap) => {
+      setMapFolders(Object.values(snap.val() || {}).filter((f) => f && f.id && f.name));
+    }, () => {});
+    subs.push(() => folderRef.off('value', folderH));
 
     const PUB_PINS = ['hazard', 'wetland', 'accident'];
     const PUB_LINES = ['road', 'skidTrail', 'cutblockBoundary', 'route'];
@@ -1722,6 +1761,7 @@ function App() {
       {showSettings && (
         <SettingsPanel
           harderStatus={harderStatus}
+          mapFolders={mapFolders}
           maps={maps}
           onDeleteMap={deleteMap}
           onRenameMap={renameMap}
