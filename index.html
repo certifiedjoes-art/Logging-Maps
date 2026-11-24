@@ -1297,6 +1297,7 @@ function App() {
   const [trailPaused, setTrailPaused] = useState(() => cacheGet('trailPaused', true));
   const [unit, setUnit] = useState(() => cacheGet('unit', 'meters'));
   const [myLiveLocation, setMyLiveLocation] = useState(null);
+  const [geoStatus, setGeoStatus] = useState({ state: 'waiting', accuracy: null }); // why there might be no blue dot
 
   const [placingPin, setPlacingPin] = useState(false);
   const [measureMode, setMeasureMode] = useState(false);
@@ -1335,10 +1336,11 @@ function App() {
         // circle for how far off it could be, so an indoor / poor-sky iPad
         // isn't just blank. Recorded tracks still ignore anything over 50 m.
         const acc = pos.coords.accuracy;
-        if (acc != null && acc > 2000) return;
+        if (acc != null && acc > 2000) { setGeoStatus({ state: 'weak', accuracy: Math.round(acc) }); return; }
+        setGeoStatus({ state: 'ok', accuracy: acc != null ? Math.round(acc) : null });
         setMyLiveLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: acc });
       },
-      () => {},
+      (err) => setGeoStatus({ state: err && err.code === 1 ? 'denied' : err && err.code === 2 ? 'unavailable' : 'timeout', accuracy: null }),
       { enableHighAccuracy: true, maximumAge: 0 }
     );
     return () => navigator.geolocation.clearWatch(watchId);
@@ -1771,6 +1773,21 @@ function App() {
           )}
         </div>
       </div>
+
+      {/* Why-no-blue-dot note — only shows while there's no dot */}
+      {!myPosition && currentMap && (
+        <div style={{ position: 'absolute', top: 58, left: 10, right: 64, zIndex: 6, pointerEvents: 'none' }}>
+          <span className="text-xs rounded-lg px-2 py-1 inline-block" style={{ ...pill, color: COLORS.inkDim }}>
+            {!currentMapGeoreferenced ? '📍 This map has no GPS data, so there is no blue dot'
+              : !navigator.geolocation ? '📍 This browser has no location support'
+              : geoStatus.state === 'denied' ? '📍 Location is blocked — allow it in iPad Settings › Privacy › Location Services'
+              : geoStatus.state === 'unavailable' ? '📍 Location unavailable — check Location Services is on'
+              : geoStatus.state === 'weak' ? `📍 GPS signal too weak (${geoStatus.accuracy} m)`
+              : geoStatus.state === 'timeout' ? '📍 No GPS signal yet'
+              : '📍 Waiting for GPS…'}
+          </span>
+        </div>
+      )}
 
       {/* Tool buttons, floating bottom-left — bottom-right stays clear for the center-on-me button */}
       <div style={{ position: 'absolute', bottom: 10, left: 10, right: 64, zIndex: 6, display: 'flex', gap: 8, flexWrap: 'wrap', pointerEvents: 'none' }}>
