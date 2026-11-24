@@ -779,8 +779,11 @@ function MapCanvas({ viewportRef, viewBoxWidth, viewBoxHeight, backgroundImageUr
 
       {myPosition && (
         <g transform={`translate(${myPosition.px}, ${myPosition.py})`} style={{ pointerEvents: 'none' }}>
+          {myPosition.weak && myPosition.ringPx > 10 && (
+            <circle r={myPosition.ringPx} fill="#4285F4" fillOpacity="0.08" stroke="#4285F4" strokeOpacity="0.5" strokeWidth="2" strokeDasharray="8 6" />
+          )}
           <circle r="10" fill="#4285F4" fillOpacity="0.25" />
-          <circle r="6" fill="#4285F4" stroke="#fff" strokeWidth="2" />
+          <circle r="6" fill={myPosition.weak ? '#9DBBF5' : '#4285F4'} stroke="#fff" strokeWidth="2" />
         </g>
       )}
     </svg>
@@ -1312,8 +1315,12 @@ function App() {
         // itself locks on a few seconds later. Ignoring anything coarser
         // than 50m keeps that one bad guess from ever showing up as the
         // blue dot.
-        if (pos.coords.accuracy != null && pos.coords.accuracy > 50) return;
-        setMyLiveLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        // Weak fixes (50 m – 2 km) still show, but as a pale dot with a
+        // circle for how far off it could be, so an indoor / poor-sky iPad
+        // isn't just blank. Recorded tracks still ignore anything over 50 m.
+        const acc = pos.coords.accuracy;
+        if (acc != null && acc > 2000) return;
+        setMyLiveLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: acc });
       },
       () => {},
       { enableHighAccuracy: true, maximumAge: 0 }
@@ -1621,7 +1628,19 @@ function App() {
     return l;
   }).filter((l) => l.points.length >= 2);
 
-  const myPosition = (currentMap && currentMapGeoreferenced && myLiveLocation) ? latLngToPixel(currentMap, myLiveLocation.lat, myLiveLocation.lng) : null;
+  const myPosition = (() => {
+    if (!(currentMap && currentMapGeoreferenced && myLiveLocation)) return null;
+    const p = latLngToPixel(currentMap, myLiveLocation.lat, myLiveLocation.lng);
+    if (!p) return null;
+    const acc = myLiveLocation.accuracy;
+    const weak = acc != null && acc > 50;
+    let ringPx = 0;
+    if (weak) {
+      const q = latLngToPixel(currentMap, myLiveLocation.lat + acc / 111320, myLiveLocation.lng);
+      if (q) ringPx = Math.hypot(q.px - p.px, q.py - p.py);
+    }
+    return { ...p, weak, ringPx };
+  })();
   // How far the operator's actual GPS position is from this map's real-world
   // location — separate from myPosition above, which is just that same GPS
   // fix converted into this map's pixel space (it doesn't know or care how
