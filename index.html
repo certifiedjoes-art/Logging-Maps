@@ -1248,6 +1248,8 @@ function SettingsPanel({ harderStatus, mapFolders, maps, onDeleteMap, onRenameMa
 function App() {
   const [maps, setMaps] = useState(() => cacheGet('maps', []));
   const [selectedMapId, setSelectedMapId] = useState(() => cacheGet('selectedMapId', null));
+  const [showMapPicker, setShowMapPicker] = useState(false);
+  const [pickerFolderKey, setPickerFolderKey] = useState(null);
   const [pins, setPins] = useState(() => cacheGet('pins', []));
   const [lines, setLines] = useState(() => cacheGet('lines', []));
   // Tracks — each time recording is turned on, that's a new, separate,
@@ -1678,15 +1680,57 @@ function App() {
         </GestureMapViewport>
       </div>
 
+      {showMapPicker && (() => {
+        const fIds = new Set((mapFolders || []).map((f) => f.id));
+        const folders = [...(mapFolders || [])].filter((f) => maps.some((m) => m.folderId === f.id)).sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true }));
+        const openFolder = pickerFolderKey ? folders.find((f) => f.id === pickerFolderKey) || null : null;
+        const list = openFolder ? maps.filter((m) => m.folderId === openFolder.id) : (folders.length ? maps.filter((m) => !m.folderId || !fIds.has(m.folderId)) : maps);
+        const close = () => { setShowMapPicker(false); setPickerFolderKey(null); };
+        return (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 150, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'flex-end' }} onClick={close}>
+            <div className="w-full p-5" style={{ background: COLORS.bg, borderRadius: '16px 16px 0 0', maxHeight: '75vh', overflowY: 'auto', border: `2px solid ${COLORS.line}`, borderBottom: 'none' }} onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-4">
+                {openFolder ? (
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => setPickerFolderKey(null)} className="text-2xl leading-none px-1" style={{ color: COLORS.accent }} title="Close folder">✕</button>
+                    <h2 className="font-display text-lg font-bold">📁 {openFolder.name}</h2>
+                  </div>
+                ) : (
+                  <h2 className="font-display text-lg font-bold">Choose a map</h2>
+                )}
+                <button onClick={close} className="text-2xl" style={{ color: COLORS.inkDim }}>{openFolder ? '' : '✕'}</button>
+              </div>
+              {!openFolder && folders.length > 0 && (
+                <div className="grid gap-3 pb-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(92px, 1fr))' }}>
+                  {folders.map((f) => (
+                    <FolderTile key={f.id} name={f.name} count={maps.filter((m) => m.folderId === f.id).length} onOpen={() => setPickerFolderKey(f.id)} />
+                  ))}
+                </div>
+              )}
+              <div className="space-y-2">
+                {list.map((m) => (
+                  <button key={m.id} onClick={() => { setSelectedMapId(m.id); close(); }}
+                    className="w-full text-left rounded-lg p-3 font-display font-semibold"
+                    style={{ background: currentMap && currentMap.id === m.id ? COLORS.accent : COLORS.surfaceRaised, color: currentMap && currentMap.id === m.id ? COLORS.ink2 : COLORS.ink, border: `1px solid ${COLORS.line}` }}>
+                    {m.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Top bar: map name/picker (left) + settings gear — right side left clear for the N compass button */}
       <div style={{ position: 'absolute', top: 10, left: 10, right: 64, zIndex: 6, display: 'flex', alignItems: 'center', gap: 8, pointerEvents: 'none' }}>
         <button onClick={() => setShowSettings(true)} className="flex-shrink-0 text-lg rounded-full" style={{ ...pill, width: 40, height: 40, pointerEvents: 'auto' }} title="Settings">⚙️</button>
         <div className="flex-1 min-w-0 rounded-lg" style={{ ...pill, pointerEvents: 'auto' }}>
           {maps.length > 1 ? (
-            <select value={currentMap ? currentMap.id : ''} onChange={(e) => setSelectedMapId(e.target.value)}
-              className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none bg-transparent" style={{ color: COLORS.ink, border: 'none' }}>
-              {maps.map((m) => <option key={m.id} value={m.id} style={{ background: COLORS.bg }}>{m.name}</option>)}
-            </select>
+            <button onClick={() => { setPickerFolderKey(null); setShowMapPicker(true); }}
+              className="w-full rounded-lg px-3 py-2 text-sm text-left flex items-center justify-between gap-2" style={{ color: COLORS.ink, background: 'transparent', border: 'none' }}>
+              <span className="truncate font-semibold">{currentMap ? currentMap.name : 'Choose a map'}</span>
+              <span style={{ color: COLORS.inkDim }}>▾</span>
+            </button>
           ) : (
             <p className="text-sm font-display font-bold truncate px-3 py-2">{currentMap ? currentMap.name : 'Harder Field Map'}</p>
           )}
