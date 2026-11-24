@@ -153,7 +153,7 @@
 
 <script type="text/babel" data-presets="react">
 try {
-const { useState, useEffect, useRef, useImperativeHandle } = React;
+const { useState, useEffect, useRef, useImperativeHandle, useMemo } = React;
 
 const COLORS = {
   bg: '#1B1F19',
@@ -1249,7 +1249,23 @@ function SettingsPanel({ harderStatus, mapFolders, maps, onDeleteMap, onRenameMa
 
 // ---------- Main app ----------
 function App() {
-  const [maps, setMaps] = useState(() => cacheGet('maps', []));
+  const [allMaps, setMaps] = useState(() => cacheGet('maps', []));
+  // The same map can arrive twice: once linked from the Harder app (with its
+  // folder) and once as an older Upload & Share copy (no folder). Show each
+  // map once — the Harder-linked copy wins. Nothing is deleted; the hidden
+  // copy stays in storage, just out of the lists.
+  const maps = useMemo(() => {
+    const norm = (n) => (n || '').trim().toLowerCase();
+    const harderIds = new Set(allMaps.filter((m) => m.harder).map((m) => m.id));
+    const harderNames = new Set(allMaps.filter((m) => m.harder).map((m) => norm(m.name)));
+    const seen = new Set();
+    return allMaps.filter((m) => {
+      if (!m.harder && (harderIds.has(m.id) || harderNames.has(norm(m.name)))) return false;
+      if (seen.has(m.id)) return false;
+      seen.add(m.id);
+      return true;
+    });
+  }, [allMaps]);
   const [selectedMapId, setSelectedMapId] = useState(() => cacheGet('selectedMapId', null));
   const [showMapPicker, setShowMapPicker] = useState(false);
   const [pickerFolderKey, setPickerFolderKey] = useState(null);
@@ -1549,7 +1565,7 @@ function App() {
     setUploadingShared(false);
   };
 
-  useEffect(() => { cacheSet('maps', maps); }, [maps]);
+  useEffect(() => { cacheSet('maps', allMaps); }, [allMaps]);
   useEffect(() => { cacheSet('selectedMapId', selectedMapId); }, [selectedMapId]);
   useEffect(() => { cacheSet('pins', pins); }, [pins]);
   useEffect(() => { cacheSet('lines', lines); }, [lines]);
@@ -1558,7 +1574,7 @@ function App() {
 
   const deleteMap = async (mapId) => {
     await idbDeleteMapImageBlob(mapId);
-    const next = maps.filter((m) => m.id !== mapId);
+    const next = allMaps.filter((m) => m.id !== mapId);
     setMaps(next);
     setPins((p) => p.filter((pin) => pin.mapId !== mapId));
     setLines((l) => l.filter((ln) => ln.mapId !== mapId));
